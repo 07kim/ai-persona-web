@@ -13,7 +13,7 @@ function greet() {
 }
 
 export default function Home() {
-  const { personas, templates, surveyRuns, discussions, deliberationSessions } = useAppStore()
+  const { personas, surveyRuns, discussions, deliberationSessions } = useAppStore()
 
   const recentPersonas = [...personas]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
