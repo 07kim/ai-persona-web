@@ -1,6 +1,6 @@
-# React + TypeScript + Vite
+# AIペルソナ Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + TypeScript + Vite + Tailwind CSS で構築したAIペルソナ生成・管理Webアプリ。
 
 Currently, two official plugins are available:
 
