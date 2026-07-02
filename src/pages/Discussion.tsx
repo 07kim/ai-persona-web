@@ -128,6 +128,7 @@ export default function Discussion() {
           await generatePersonaReply(
             persona, session.topic, history, round, session.total_rounds, settings,
             chunk => { text += chunk; setStreamingMsg(text) },
+            session.materials,
           )
           success = true
         } catch (e) {

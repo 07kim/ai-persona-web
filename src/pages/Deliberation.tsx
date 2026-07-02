@@ -17,9 +17,11 @@ import {
   type DesignSpec,
 } from '../lib/ai'
 import { generateId, now, sleep } from '../lib/utils'
+import { parseFileToText } from '../lib/fileParser'
 import { PRESET_ROLES, buildParticipantSystemPrompt, FACILITATOR_ID, type PresetRole } from '../lib/presetRoles'
-import type { DeliberationParticipant, DeliberationMessage, ArtifactData, DeliberationSummary, DeliberationSessionRecord, DeliberationParticipantConfig, ParticipantTemplate } from '../types'
+import type { DeliberationParticipant, DeliberationMessage, ArtifactData, DeliberationSummary, DeliberationSessionRecord, DeliberationParticipantConfig, ParticipantTemplate, MaterialItem } from '../types'
 import { PresetPersonaSection } from '../components/PresetPersonaSection'
+import { MaterialsPanel } from '../components/MaterialsPanel'
 
 type Screen = 'setup' | 'session' | 'summary'
 type ArtifactTab = 'minutes' | 'spec' | 'risk' | 'design'
@@ -60,6 +62,7 @@ export default function Deliberation() {
   const [viewingSession, setViewingSession] = useState<DeliberationSessionRecord | null>(null)
   const sessionIdRef = useRef<string | null>(resumeSession?.id ?? null)
   const [topic, setTopic] = useState(resumeSession?.topic ?? '')
+  const [materials, setMaterials] = useState<MaterialItem[]>(resumeSession?.materials ?? [])
   const [selectedPresetIds, setSelectedPresetIds] = useState<string[]>(initConfig?.presetIds ?? [])
   const [selectedPersonaIds, setSelectedPersonaIds] = useState<string[]>(initConfig?.personaIds ?? preSelectedPersonaIds)
   const [personaGroupFilter, setPersonaGroupFilter] = useState<string | null>(null)
@@ -264,7 +267,7 @@ export default function Deliberation() {
             await generateDeliberationReply(participant, systemPrompt, topic, history, settings, chunk => {
               accumulated += chunk
               updateStreamingMessage(msgId, accumulated)
-            }, onRateWait)
+            }, onRateWait, materials)
           }
           updateStreamingMessage(msgId, accumulated, true)
         } catch (e) {
@@ -333,6 +336,7 @@ export default function Deliberation() {
       status: 'active',
       turn: 0,
       participantConfig: buildParticipantConfig(),
+      materials: materials.length > 0 ? materials : undefined,
     }
     await saveDeliberationSession(initialRecord)
 
@@ -521,6 +525,17 @@ export default function Deliberation() {
                 placeholder="例: このサブスクアプリの市場性と課題についてどう思いますか？"
                 rows={2}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-none bg-white"
+              />
+            </div>
+
+            {/* 添付資料 */}
+            <div className="mb-4">
+              <MaterialsPanel
+                materials={materials}
+                onChange={setMaterials}
+                label="参考資料を添付する（任意）"
+                description="画像・PDF・URL などを添付すると参加者がその内容を踏まえて議論します"
+                collapsed
               />
             </div>
 

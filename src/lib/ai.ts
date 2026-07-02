@@ -181,6 +181,18 @@ async function generateText(
   return result.response.text()
 }
 
+/** 添付資料から画像パーツを抽出する（base64 data URL → { mimeType, data } ） */
+export function extractImageParts(materials: MaterialItem[]): { mimeType: string; data: string; name: string }[] {
+  return materials
+    .filter(m => m.type === 'image' && m.content?.startsWith('data:'))
+    .map(m => {
+      const match = m.content.match(/^data:([^;]+);base64,(.+)$/)
+      if (!match) return null
+      return { mimeType: match[1], data: match[2], name: m.name }
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+}
+
 /** ストリーミングでテキストを生成し、チャンクごとに onChunk を呼ぶ */
 async function generateTextStream(
   messages: Message[],
@@ -188,20 +200,36 @@ async function generateTextStream(
   settings: Settings,
   onChunk: (text: string) => void,
   onWait?: (remainingSecs: number, attempt: number) => void,
+  imageParts?: { mimeType: string; data: string; name: string }[],
 ): Promise<string> {
   const model = getModelName(settings)
   const provider = getProvider(model)
   const apiKey = getApiKeyForModel(settings, model)
+  const images = imageParts ?? []
   let full = ''
 
   if (provider === 'openai') {
     const client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true })
-    const stream = await withRetry(
-      () => client.chat.completions.create({
-        model,
-        stream: true,
-        messages: [{ role: 'system', content: systemPrompt }, ...messages],
+    // 最後のユーザーメッセージに画像を追加
+    const lastIdx = messages.map(m => m.role).lastIndexOf('user')
+    const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map((m, i) => {
+        if (i === lastIdx && images.length > 0) {
+          const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+            { type: 'text', text: m.content },
+            ...images.map(img => ({
+              type: 'image_url' as const,
+              image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+            })),
+          ]
+          return { role: m.role as 'user' | 'assistant', content }
+        }
+        return { role: m.role as 'user' | 'assistant', content: m.content }
       }),
+    ]
+    const stream = await withRetry(
+      () => client.chat.completions.create({ model, stream: true, messages: openaiMessages }),
       onWait,
     )
     for await (const chunk of stream) {
@@ -214,11 +242,25 @@ async function generateTextStream(
 
   if (provider === 'anthropic') {
     const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+    const lastIdx = messages.map(m => m.role).lastIndexOf('user')
+    const anthropicMessages: Anthropic.MessageParam[] = messages.map((m, i) => {
+      if (i === lastIdx && images.length > 0) {
+        const content: Anthropic.ContentBlockParam[] = [
+          ...images.map(img => ({
+            type: 'image' as const,
+            source: { type: 'base64' as const, media_type: img.mimeType as Anthropic.Base64ImageSource['media_type'], data: img.data },
+          })),
+          { type: 'text' as const, text: m.content },
+        ]
+        return { role: m.role as 'user' | 'assistant', content }
+      }
+      return { role: m.role as 'user' | 'assistant', content: m.content }
+    })
     const stream = client.messages.stream({
       model,
       max_tokens: 4096,
       system: systemPrompt,
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      messages: anthropicMessages,
     })
     for await (const event of stream) {
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -238,7 +280,12 @@ async function generateTextStream(
     parts: [{ text: m.content }],
   }))
   const chat = genModel.startChat({ history })
-  const result = await withRetry(() => chat.sendMessageStream(lastUser), onWait)
+  // Gemini: 最後のメッセージに画像パーツを追加
+  const geminiParts: Part[] = [
+    { text: lastUser },
+    ...images.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
+  ]
+  const result = await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
   for await (const chunk of result.stream) {
     const t = chunk.text()
     full += t
@@ -350,8 +397,10 @@ export async function generatePersonaReply(
   totalRounds: number,
   settings: Settings,
   onChunk: (text: string) => void,
+  materials?: MaterialItem[],
 ): Promise<string> {
-  const systemPrompt = buildPersonaSystemPrompt(persona)
+  const materialContext = buildMaterialContext(materials ?? [])
+  const systemPrompt = buildPersonaSystemPrompt(persona) + materialContext
 
   let phaseInstruction = ''
   if (round === 1) {
@@ -368,7 +417,8 @@ export async function generatePersonaReply(
 
   const userMessage = `「${topic}」についての議論に参加してください。${historyText}\n${phaseInstruction}\n\n500文字以内で、口語体で率直に発言してください。`
 
-  return generateTextStream([{ role: 'user', content: userMessage }], systemPrompt, settings, onChunk)
+  const images = extractImageParts(materials ?? [])
+  return generateTextStream([{ role: 'user', content: userMessage }], systemPrompt, settings, onChunk, undefined, images)
 }
 
 // ファシリテーターの要約生成
@@ -409,19 +459,34 @@ export async function generateInterviewReply(
     { role: 'user' as const, content: userMessage },
   ]
 
-  return generateTextStream(messages, systemPrompt, settings, onChunk)
+  const images = extractImageParts(materials ?? [])
+  return generateTextStream(messages, systemPrompt, settings, onChunk, undefined, images)
 }
 
 /** 添付資料からプロンプト用テキストを構築する */
 export function buildMaterialContext(materials: MaterialItem[]): string {
   if (!materials || materials.length === 0) return ''
-  const parts = materials.map(m => {
-    if (m.type === 'url') return `## 参考URL\n${m.url || m.name}\n${m.content ? `内容の抜粋:\n${m.content.slice(0, 500)}` : ''}`
-    if (m.type === 'image') return `## 画像資料: ${m.name}\n（画像が添付されています）`
-    if (m.type === 'code') return `## コード資料: ${m.name}\n\`\`\`\n${m.content.slice(0, 1000)}\n\`\`\``
-    return `## 資料: ${m.name}\n${m.content.slice(0, 1000)}`
+  const parts = materials.map((m, i) => {
+    const label = `資料${i + 1}`
+    if (m.type === 'url') {
+      return `## ${label}: 参考URL「${m.name}」\nURL: ${m.url || m.name}${m.content ? `\n内容抜粋:\n${m.content.slice(0, 800)}` : '\n（URLの内容を参考に回答してください）'}`
+    }
+    if (m.type === 'image') {
+      return `## ${label}: 画像「${m.name}」\n（この画像が添付されています。画像の内容を視覚的に分析し、「${m.name}の画像について」と参照しながら回答してください）`
+    }
+    if (m.type === 'pdf') {
+      return `## ${label}: PDF「${m.name}」\n${m.content ? m.content.slice(0, 2000) : '（PDFが添付されています）'}`
+    }
+    if (m.type === 'code') {
+      return `## ${label}: コード「${m.name}」\n\`\`\`\n${m.content.slice(0, 1500)}\n\`\`\``
+    }
+    return `## ${label}: 資料「${m.name}」\n${m.content ? m.content.slice(0, 1500) : '（資料が添付されています）'}`
   })
-  return `\n\n# 参考資料\n以下の資料をもとに回答・評価してください。\n\n${parts.join('\n\n')}`
+
+  return `\n\n# 添付資料（${materials.length}件）\n\
+以下の資料が添付されています。回答時は「この画像について」「このPDFによると」「このリンクの内容では」のように、\
+具体的にどの資料を参照しているか明示しながら回答してください。\
+ユーザーが資料について質問した場合は、必ずその資料の内容に基づいて具体的に答えてください。\n\n${parts.join('\n\n')}`
 }
 
 /** ペルソナの品質スコアをチェックし、低品質なら改善したペルソナを再生成する */
@@ -547,6 +612,22 @@ ${questionsText}
 
 JSONで返してください: {"answers": [{"question_id": "...", "answer": "..."}]}`
 
+  // アンケートはストリーミング不要だが、画像を含む場合はマルチモーダル送信が必要
+  const images = extractImageParts(materials ?? [])
+  if (images.length > 0) {
+    // 画像あり: generateTextStream経由でマルチモーダル送信
+    let raw = ''
+    await generateTextStream(
+      [{ role: 'user', content: userMessage }],
+      systemPrompt,
+      settings,
+      chunk => { raw += chunk },
+      undefined,
+      images,
+    )
+    const parsed = JSON.parse(raw)
+    return parsed.answers
+  }
   const text = await generateText(userMessage, systemPrompt, settings, true)
   const parsed = JSON.parse(text)
   return parsed.answers
@@ -592,7 +673,8 @@ export async function generateDeliberationReply(
 
   const userMessage = `テーマ「${topic}」の議論です。${historyText}\n${reactionGuide}\n\n300文字以内、口語体で。`
 
-  return generateTextStream([{ role: 'user', content: userMessage }], fullSystemPrompt, settings, onChunk, onWait)
+  const images = extractImageParts(materials ?? [])
+  return generateTextStream([{ role: 'user', content: userMessage }], fullSystemPrompt, settings, onChunk, onWait, images)
 }
 
 // ファシリテーターの発言生成
