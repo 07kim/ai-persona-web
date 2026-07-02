@@ -17,11 +17,10 @@ import {
   type DesignSpec,
 } from '../lib/ai'
 import { generateId, now, sleep } from '../lib/utils'
-import { parseFileToText } from '../lib/fileParser'
 import { PRESET_ROLES, buildParticipantSystemPrompt, FACILITATOR_ID, type PresetRole } from '../lib/presetRoles'
 import type { DeliberationParticipant, DeliberationMessage, ArtifactData, DeliberationSummary, DeliberationSessionRecord, DeliberationParticipantConfig, ParticipantTemplate, MaterialItem } from '../types'
 import { PresetPersonaSection } from '../components/PresetPersonaSection'
-import { MaterialsPanel } from '../components/MaterialsPanel'
+import MaterialsPanel from '../components/MaterialsPanel'
 
 type Screen = 'setup' | 'session' | 'summary'
 type ArtifactTab = 'minutes' | 'spec' | 'risk' | 'design'

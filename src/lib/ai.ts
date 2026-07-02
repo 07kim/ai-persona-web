@@ -214,16 +214,18 @@ async function generateTextStream(
     const lastIdx = messages.map(m => m.role).lastIndexOf('user')
     const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...messages.map((m, i) => {
-        if (i === lastIdx && images.length > 0) {
-          const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
-            { type: 'text', text: m.content },
-            ...images.map(img => ({
-              type: 'image_url' as const,
-              image_url: { url: `data:${img.mimeType};base64,${img.data}` },
-            })),
-          ]
-          return { role: m.role as 'user' | 'assistant', content }
+      ...messages.map((m, i): OpenAI.Chat.Completions.ChatCompletionMessageParam => {
+        if (m.role === 'user' && i === lastIdx && images.length > 0) {
+          return {
+            role: 'user',
+            content: [
+              { type: 'text', text: m.content },
+              ...images.map(img => ({
+                type: 'image_url' as const,
+                image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+              })),
+            ],
+          }
         }
         return { role: m.role as 'user' | 'assistant', content: m.content }
       }),
