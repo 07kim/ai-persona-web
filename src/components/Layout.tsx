@@ -64,6 +64,11 @@ const NAV: NavGroup[] = [
     items: [
       { to: '/discussion', label: 'インタビュー・議論', icon: MessageSquare, end: true },
       { to: '/discussion/history', label: 'インタビュー履歴', icon: ClipboardList, end: true },
+    ],
+  },
+  {
+    label: '対話',
+    items: [
       { to: '/deliberation', label: '対話セッション', icon: MessagesSquare, end: true },
       { to: '/deliberation/sessions', label: '対話管理', icon: FileText, end: true },
     ],

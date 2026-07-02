@@ -43,10 +43,11 @@ export default function Home() {
           <p className="text-sm text-slate-500">顧客データからペルソナを生成し、インタビュー・議論・アンケートで深いインサイトを引き出します</p>
 
           {/* スタット */}
-          <div className="flex gap-6 mt-6">
+          <div className="flex flex-wrap gap-3 mt-6">
             <StatPill label="ペルソナ" value={personas.length} to="/personas" color="indigo" />
-            <StatPill label="テンプレート" value={templates.length} to="/survey/templates" color="teal" />
-            <StatPill label="アンケート実行" value={surveyRuns.length} to="/survey/results" color="violet" />
+            <StatPill label="インタビュー" value={discussions.length} to="/discussion/history" color="sky" />
+            <StatPill label="対話セッション" value={deliberationSessions.length} to="/deliberation/sessions" color="violet" />
+            <StatPill label="アンケート" value={surveyRuns.length} to="/survey/results" color="teal" />
           </div>
         </div>
       </div>
@@ -135,24 +136,50 @@ export default function Home() {
         {/* ワークフロー: インタビュー */}
         <Section
           icon={<MessageSquare size={15} className="text-sky-400" />}
-          title="インタビュー・議論"
-          subtitle="ペルソナと1対1でインタビュー、または複数人で議論させます"
+          title="インタビュー"
+          subtitle="ペルソナと1対1でインタビューし、過去のセッションを管理します"
           accent="sky"
         >
           <div className="grid grid-cols-2 gap-3">
             <ActionCard
               icon={<MessageSquare size={18} />}
-              title="1対1インタビュー"
+              title="インタビュー・議論"
               desc="ペルソナに直接質問して深掘りする"
               to="/discussion"
               accent="sky"
               primary
             />
             <ActionCard
+              icon={<Layers size={18} />}
+              title="インタビュー履歴"
+              desc={`${discussions.length}件のインタビューを確認・再開`}
+              to="/discussion/history"
+              accent="sky"
+            />
+          </div>
+        </Section>
+
+        {/* ワークフロー: 対話 */}
+        <Section
+          icon={<MessagesSquare size={15} className="text-violet-400" />}
+          title="対話セッション"
+          subtitle="複数キャラクターで構造化ディスカッションを行い、管理します"
+          accent="violet"
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <ActionCard
               icon={<MessagesSquare size={18} />}
-              title="対話セッション"
-              desc="複数キャラクターで構造化ディスカッション"
+              title="対話セッション開始"
+              desc="複数の役割・ペルソナで議論させる"
               to="/deliberation"
+              accent="violet"
+              primary
+            />
+            <ActionCard
+              icon={<FileText size={18} />}
+              title="対話管理"
+              desc={`${deliberationSessions.length}件のセッションを確認・再開`}
+              to="/deliberation/sessions"
               accent="violet"
             />
           </div>
@@ -197,12 +224,13 @@ export default function Home() {
 
 /* ── スタットピル ── */
 function StatPill({ label, value, to, color }: {
-  label: string; value: number; to: string; color: 'indigo' | 'teal' | 'violet'
+  label: string; value: number; to: string; color: 'indigo' | 'teal' | 'violet' | 'sky'
 }) {
   const colors = {
     indigo: 'text-indigo-600 bg-indigo-50 border-indigo-100',
     teal: 'text-teal-600 bg-teal-50 border-teal-100',
     violet: 'text-violet-600 bg-violet-50 border-violet-100',
+    sky: 'text-sky-600 bg-sky-50 border-sky-100',
   }[color]
 
   return (
@@ -224,16 +252,16 @@ function Section({ icon, title, subtitle, accent, children }: {
   accent: 'indigo' | 'sky' | 'teal' | 'violet'
   children: React.ReactNode
 }) {
-  const border = {
+  const border: Record<string, string> = {
     indigo: 'border-indigo-200',
     sky: 'border-sky-200',
     teal: 'border-teal-200',
     violet: 'border-violet-200',
-  }[accent]
+  }
 
   return (
     <div>
-      <div className={`flex items-center gap-2 mb-3 pb-3 border-b ${border}`}>
+      <div className={`flex items-center gap-2 mb-3 pb-3 border-b ${border[accent]}`}>
         {icon}
         <div>
           <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
