@@ -10,6 +10,7 @@ import { generateId, now } from '../lib/utils'
 import { parseFileToText } from '../lib/fileParser'
 import type { DiscussionSession, Message, Persona, DeliberationSummary, MaterialItem } from '../types'
 import type { Part } from '@google/generative-ai'
+import { PresetPersonaSection } from '../components/PresetPersonaSection'
 
 type Mode = 'setup' | 'session' | 'summary'
 
@@ -442,6 +443,16 @@ export default function Discussion() {
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
               {sessionMode === 'interview' ? 'インタビューするペルソナ（1人）' : 'グループに参加するペルソナ'}
+            </p>
+          </div>
+          <PresetPersonaSection
+            selectedIds={selectedIds}
+            onSelect={setSelectedIds}
+            multi={sessionMode === 'group'}
+          />
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              作成済みペルソナ
               {selectedIds.length > 0 && (
                 <span className="ml-2 text-indigo-600 normal-case font-medium">
                   {selectedIds.length}人選択中

@@ -19,6 +19,7 @@ import {
 import { generateId, now, sleep } from '../lib/utils'
 import { PRESET_ROLES, buildParticipantSystemPrompt, FACILITATOR_ID, type PresetRole } from '../lib/presetRoles'
 import type { DeliberationParticipant, DeliberationMessage, ArtifactData, DeliberationSummary, DeliberationSessionRecord, DeliberationParticipantConfig, ParticipantTemplate } from '../types'
+import { PresetPersonaSection } from '../components/PresetPersonaSection'
 
 type Screen = 'setup' | 'session' | 'summary'
 type ArtifactTab = 'minutes' | 'spec' | 'risk' | 'design'
@@ -569,6 +570,13 @@ export default function Deliberation() {
                   ))}
                 </div>
               </div>
+
+              {/* プリセットペルソナ */}
+              <PresetPersonaSection
+                selectedIds={selectedPersonaIds}
+                onSelect={setSelectedPersonaIds}
+                multi={true}
+              />
 
               {/* DBペルソナ（常に表示） */}
               <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-3">

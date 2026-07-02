@@ -6,6 +6,7 @@ import { generateSurveyResponse, parseUserFriendlyError } from '../lib/ai'
 import { generateId, now, sleep } from '../lib/utils'
 import { parseFileToText } from '../lib/fileParser'
 import type { SurveyRun, PersonaSurveyResult, MaterialItem } from '../types'
+import { PresetPersonaSection } from '../components/PresetPersonaSection'
 
 export default function Survey() {
   const navigate = useNavigate()
@@ -247,6 +248,12 @@ export default function Survey() {
             <button onClick={clearAll} className="text-xs text-gray-400 hover:text-gray-600">解除</button>
           </div>
         </div>
+
+        <PresetPersonaSection
+          selectedIds={selectedPersonaIds}
+          onSelect={setSelectedPersonaIds}
+          multi={true}
+        />
 
         {/* グループフィルター */}
         {groups.length > 0 && (
