@@ -146,7 +146,7 @@ export default function Survey() {
   }
 
   const MATERIAL_ICONS: Record<MaterialItem['type'], React.ElementType> = {
-    image: Image, document: FileText, code: Code, url: LinkIcon,
+    image: Image, document: FileText, code: Code, url: LinkIcon, video: FileText, pdf: FileText,
   }
 
   return (

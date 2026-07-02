@@ -74,12 +74,6 @@ const SURVEY_PRESETS: PresetDef[] = [
   },
 ]
 
-const TYPE_OPTIONS: { type: QuestionType; label: string; icon: React.ElementType; hint: string }[] = [
-  { type: 'multiple_choice', label: '選択式', icon: List, hint: '選択肢から選んで回答' },
-  { type: 'free_text', label: '自由記述', icon: FileText, hint: '自由に文章で回答' },
-  { type: 'scale_rating', label: 'スケール', icon: SlidersHorizontal, hint: '数値スケールで評価' },
-]
-
 const TYPE_ICON: Record<QuestionType, React.ElementType> = {
   multiple_choice: List,
   free_text: FileText,
