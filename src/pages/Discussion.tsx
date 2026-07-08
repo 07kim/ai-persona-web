@@ -28,7 +28,7 @@ export default function Discussion() {
   const [totalRounds, setTotalRounds] = useState(resumeSession?.total_rounds ?? 3)
 
   // 添付資料
-  const [materials, setMaterials] = useState<MaterialItem[]>([])
+  const [materials, setMaterials] = useState<MaterialItem[]>(resumeSession?.materials ?? [])
   const [showMaterials, setShowMaterials] = useState(false)
   const [urlInput, setUrlInput] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
@@ -85,6 +85,7 @@ export default function Discussion() {
       status: 'active',
       current_round: 1,
       total_rounds: sessionMode === 'group' ? totalRounds : 1,
+      materials: materials.length > 0 ? materials : undefined,
     }
 
     chatHistoryRef.current = []
