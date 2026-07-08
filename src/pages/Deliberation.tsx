@@ -60,6 +60,7 @@ export default function Deliberation() {
   const [screen, setScreen] = useState<Screen>(resumeSession ? 'session' : 'setup')
   const [viewingSession, setViewingSession] = useState<DeliberationSessionRecord | null>(null)
   const sessionIdRef = useRef<string | null>(resumeSession?.id ?? null)
+  const sessionCreatedAt = useRef<string>(resumeSession?.created_at ?? now())
   const [topic, setTopic] = useState(resumeSession?.topic ?? '')
   const [materials, setMaterials] = useState<MaterialItem[]>(resumeSession?.materials ?? [])
   const [selectedPresetIds, setSelectedPresetIds] = useState<string[]>(initConfig?.presetIds ?? [])
@@ -311,7 +312,9 @@ export default function Deliberation() {
   async function handleStart() {
     if (!canStart || !settings.apiKey) { if (!settings.apiKey) setError('APIキーが設定されていません'); return }
     const sessionId = generateId()
+    const createdAt = now()
     sessionIdRef.current = sessionId
+    sessionCreatedAt.current = createdAt
     setMessages([])
     setArtifact(null)
     setDesignSpec(null)
@@ -359,7 +362,7 @@ export default function Deliberation() {
   }
 
   async function saveCurrentSession(status: 'active' | 'completed') {
-    if (!sessionIdRef.current || messagesRef.current.length === 0) return
+    if (!sessionIdRef.current) return
     const record: DeliberationSessionRecord = {
       id: sessionIdRef.current,
       topic,
@@ -367,11 +370,12 @@ export default function Deliberation() {
       messages: messagesRef.current.filter(m => !m.isStreaming),
       artifact: artifact,
       summary: summary,
-      created_at: messagesRef.current[0]?.timestamp ?? now(),
+      created_at: sessionCreatedAt.current,
       updated_at: now(),
       status,
       turn: turnRef.current,
       participantConfig: buildParticipantConfig(),
+      materials: materials.length > 0 ? materials : undefined,
     }
     await saveDeliberationSession(record)
   }
@@ -416,7 +420,7 @@ export default function Deliberation() {
       }
     }
     // 完了として保存（summaryをstateより先に使う）
-    if (sessionIdRef.current && messagesRef.current.length > 0) {
+    if (sessionIdRef.current) {
       const record: DeliberationSessionRecord = {
         id: sessionIdRef.current,
         topic,
@@ -424,11 +428,12 @@ export default function Deliberation() {
         messages: messagesRef.current.filter(m => !m.isStreaming),
         artifact,
         summary: sum,
-        created_at: messagesRef.current[0]?.timestamp ?? now(),
+        created_at: sessionCreatedAt.current,
         updated_at: now(),
         status: 'completed',
         turn: turnRef.current,
         participantConfig: buildParticipantConfig(),
+        materials: materials.length > 0 ? materials : undefined,
       }
       await saveDeliberationSession(record)
     }
