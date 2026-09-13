@@ -174,7 +174,7 @@ async function autoHealGeminiModel(apiKey: string, failedModel: string): Promise
     }
   }
 
-  const fallback = workingModel || 'gemini-1.5-flash'
+  const fallback = workingModel || 'gemini-2.0-flash'
 
   // 設定も自動修復して永続化
   try {
@@ -459,24 +459,14 @@ const GEMINI_PREFERRED_ORDER = [
   'gemini-2.0-flash-lite',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-2.5-flash-lite',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
 ]
 
-/** デフォルトで表示するGemini主要モデル一覧（API未接続時やフォールバック用） */
+/** デフォルトで表示するGemini主要モデル一覧（確実に動作する安定モデル） */
 export const FALLBACK_GEMINI_MODELS = [
   { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
   { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
   { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（大容量 1,500回/日）' },
   { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度）' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（最新プレビュー）' },
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（最新高精度プレビュー）' },
-  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite（最新軽量プレビュー）' },
-  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版）' },
-  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash（実験版）' },
 ]
 
 /** モデルIDを分かりやすい日本語ラベルに変換する */
@@ -486,11 +476,10 @@ export function formatGeminiModelLabel(modelId: string): string {
   if (m === 'gemini-2.0-flash-lite') return 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）'
   if (m === 'gemini-1.5-flash') return 'Gemini 1.5 Flash（大容量 1,500回/日）'
   if (m === 'gemini-1.5-pro') return 'Gemini 1.5 Pro（高精度）'
-  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash（最新プレビュー）'
-  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro（最新高精度プレビュー）'
-  if (m === 'gemini-2.5-flash-lite') return 'Gemini 2.5 Flash Lite（最新軽量プレビュー）'
-  if (m === 'gemini-3.7-flash') return 'Gemini 3.7 Flash（最新実験版）'
-  if (m === 'gemini-3.5-flash') return 'Gemini 3.5 Flash（実験版）'
+  if (m.includes('2.5-flash')) return `${modelId}（最新プレビュー）`
+  if (m.includes('2.5-pro')) return `${modelId}（最新高精度プレビュー）`
+  if (m.includes('3.7')) return `${modelId}（最新実験版）`
+  if (m.includes('3.5')) return `${modelId}（実験版）`
 
   return modelId
     .split('-')
