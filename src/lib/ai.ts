@@ -64,13 +64,10 @@ export function parseUserFriendlyError(err: unknown): string {
   }
 
   // ── クォータ・レート制限 ──
-  if (isFreeTierDailyExhausted(err)) {
-    return '無料プランの1日分の上限（1,500回/日）に達しました。明日リセットされます。'
-  }
-  if (isRateLimit(err)) {
+  if (isRateLimit(err) || isFreeTierDailyExhausted(err)) {
     const secs = parseRetrySeconds(s)
-    if (secs > 0) return `リクエストが一時的に集中しています（1分15回制限）。約${secs}秒後に自動で再開します。`
-    return 'リクエストが一時的に集中しています（1分15回制限）。数秒お待ちください。'
+    if (secs > 0) return `APIリクエスト制限に達しました（1分15回制限）。約${secs}秒後に自動で再試行します。`
+    return 'APIの利用制限（1分15回またはクォータ）に達しました。数秒待ってから「再開」を押してください。（※同一GCPプロジェクト内のAPIキーは上限が共有されます）'
   }
 
   // ── モデル・入力の問題 ──
@@ -117,8 +114,6 @@ async function withRetry<T>(
     } catch (err) {
       lastErr = err
       if (!isRateLimit(err)) throw err
-      // 無料枠の日次上限（1日上限）のみ即座にthrow（1分間制限は待機して自動リトライ）
-      if (isFreeTierDailyExhausted(err)) throw err
       const suggested = parseRetrySeconds(String(err)) * 1000
       const wait = Math.min(Math.max(suggested || MIN_WAIT * (i + 1), MIN_WAIT), MAX_WAIT)
       const waitSecs = Math.ceil(wait / 1000)

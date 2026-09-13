@@ -1163,10 +1163,23 @@ export default function Deliberation() {
             <div className="shrink-0 flex items-start gap-3 bg-amber-50 border-b border-amber-200 px-4 py-3">
               <AlertTriangle size={16} className="shrink-0 text-amber-500 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-amber-800">セッションが停止しました</p>
+                <p className="text-xs font-semibold text-amber-800">セッションが一時停止しました</p>
                 <p className="text-xs text-amber-700 mt-0.5">{sessionError}</p>
               </div>
-              <button onClick={handleReset} className="shrink-0 text-xs text-amber-700 underline">戻る</button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={async () => {
+                    setSessionError('')
+                    const reason = await runLoop(participants, facilitatorInterval)
+                    if (reason === 'concluded' || reason === 'cap') await finalizeSession()
+                    else await saveCurrentSession('active')
+                  }}
+                  className="px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-medium transition-colors"
+                >
+                  再開する
+                </button>
+                <button onClick={handleReset} className="text-xs text-gray-500 hover:text-gray-700 underline">戻る</button>
+              </div>
             </div>
           )}
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-gray-50">
