@@ -118,6 +118,7 @@ export interface Settings {
   model: string
   quotaSafeMode: boolean
   quotaRpm: number
+  availableGeminiModels?: string[] // そのキーで実際に利用可能なGeminiモデルID一覧
 }
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic'
@@ -138,7 +139,7 @@ export function detectProviderFromKey(apiKey: string): AiProvider | null {
 
 /** プロバイダーのデフォルトモデル */
 export const DEFAULT_MODEL_FOR_PROVIDER: Record<AiProvider, string> = {
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-2.0-flash',
   openai: 'gpt-4o-mini',
   anthropic: 'claude-haiku-4-5-20251001',
 }

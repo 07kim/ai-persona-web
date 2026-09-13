@@ -448,11 +448,30 @@ const GEMINI_PREFERRED_ORDER = [
   'gemini-1.5-pro',
 ]
 
+/** モデルIDを分かりやすい日本語ラベルに変換する */
+export function formatGeminiModelLabel(modelId: string): string {
+  const m = modelId.toLowerCase()
+  if (m === 'gemini-2.0-flash') return 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）'
+  if (m === 'gemini-1.5-flash') return 'Gemini 1.5 Flash（大容量 1,500回/日）'
+  if (m === 'gemini-1.5-pro') return 'Gemini 1.5 Pro（高精度・大容量）'
+  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash'
+  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro'
+  if (m === 'gemini-2.0-flash-lite') return 'Gemini 2.0 Flash Lite（超軽量）'
+  if (m.includes('3.8')) return `${modelId}（実験プレビュー・制限 20回/日）`
+  if (m.includes('3.7') || m.includes('3.5') || m.includes('3-flash')) return `${modelId}（プレビュー）`
+  if (m.includes('3.1-pro')) return `${modelId}（高精度プレビュー）`
+
+  return modelId
+    .split('-')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
 /** APIキーが有効かどうかを最小リクエストで検証し、利用可能な最適モデルも特定する */
 export async function validateApiKey(
   apiKey: string,
   provider: 'gemini' | 'openai' | 'anthropic' = 'gemini',
-): Promise<{ ok: boolean; message: string; detectedModel?: string }> {
+): Promise<{ ok: boolean; message: string; detectedModel?: string; availableModels?: string[] }> {
   if (!apiKey.trim()) return { ok: false, message: 'APIキーを入力してください' }
   try {
     if (provider === 'openai') {
@@ -477,7 +496,7 @@ export async function validateApiKey(
       let bestModel: string | undefined
 
       if (availableModels.length > 0) {
-        // 動的スマートスコアリングで最新・最適なモデルを選定
+        // 安定版かつ大容量枠（2.0 Flash / 1.5 Flash）を優先しつつ最新を選択
         bestModel = selectBestGeminiModel(availableModels)
       } else {
         // fetchが取得できなかった場合のフォールバック候補検証
@@ -504,7 +523,12 @@ export async function validateApiKey(
         bestModel = 'gemini-1.5-flash'
       }
 
-      return { ok: true, message: '有効なAPIキーです', detectedModel: bestModel }
+      return {
+        ok: true,
+        message: '有効なAPIキーです',
+        detectedModel: bestModel,
+        availableModels: availableModels.length > 0 ? availableModels : undefined,
+      }
     }
   } catch (err) {
     return { ok: false, message: parseUserFriendlyError(err) }

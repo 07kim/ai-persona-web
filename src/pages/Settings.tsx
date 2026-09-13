@@ -1,26 +1,21 @@
 import { useState, useRef } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { validateApiKey } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel } from '../lib/ai'
 import { getProvider } from '../types'
 import { Eye, EyeOff, CheckCircle, AlertCircle, Loader, Download, Upload, Database } from 'lucide-react'
 
-const MODEL_GROUPS = [
-  {
-    label: 'Google Gemini',
-    provider: 'gemini' as const,
-    models: [
-      { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新・高速）' },
-      { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-      { value: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-      { value: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
-      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-      { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-      { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
-      { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-      { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-    ],
-  },
+const FALLBACK_GEMINI_MODELS = [
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量枠・推奨）' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（軽量・高速）' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（安定・1,500回/日）' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高性能）' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（実験版・20回/日）' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（実験版・20回/日）' },
+  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版・20回/日）' },
+  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash（実験版・20回/日）' },
+]
+
+const STATIC_MODEL_GROUPS = [
   {
     label: 'OpenAI',
     provider: 'openai' as const,
@@ -68,11 +63,21 @@ export default function Settings() {
     setTesting(provider)
     setTestResults(r => ({ ...r, [provider]: null }))
     const result = await validateApiKey(key, provider)
-    if (result.ok && result.detectedModel) {
-      const currentProvider = getProvider(form.model)
-      if (currentProvider === provider || !form.model) {
-        setForm(f => ({ ...f, model: result.detectedModel! }))
-      }
+    if (result.ok) {
+      setForm(f => {
+        let newModel = f.model
+        if (result.detectedModel) {
+          const currentProvider = getProvider(f.model)
+          if (currentProvider === provider || !f.model) {
+            newModel = result.detectedModel
+          }
+        }
+        return {
+          ...f,
+          model: newModel,
+          ...(result.availableModels && result.availableModels.length > 0 ? { availableGeminiModels: result.availableModels } : {}),
+        }
+      })
     }
     setTestResults(r => ({ ...r, [provider]: { ok: result.ok, error: result.ok ? undefined : result.message } }))
     setTesting(null)
@@ -183,24 +188,39 @@ export default function Settings() {
         />
 
         {/* モデル */}
-        <Section title="使用モデル" description="選択したモデルのプロバイダーのAPIキーが必要です">
-          <select
-            value={form.model}
-            onChange={e => handleChange('model', e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
-          >
-            {MODEL_GROUPS.map(group => (
-              <optgroup key={group.provider} label={group.label}>
-                {group.models.map(m => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
+        {(() => {
+          const geminiModels = (form.availableGeminiModels && form.availableGeminiModels.length > 0)
+            ? form.availableGeminiModels.map(m => ({ value: m, label: formatGeminiModelLabel(m) }))
+            : FALLBACK_GEMINI_MODELS
+          const allModels = [...geminiModels, ...STATIC_MODEL_GROUPS.flatMap(g => g.models)]
+          const currentLabel = allModels.find(m => m.value === form.model)?.label ?? form.model
+
+          return (
+            <Section title="使用モデル" description="選択したモデルのプロバイダーのAPIキーが必要です">
+              <select
+                value={form.model}
+                onChange={e => handleChange('model', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+              >
+                <optgroup label="Google Gemini">
+                  {geminiModels.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </optgroup>
+                {STATIC_MODEL_GROUPS.map(group => (
+                  <optgroup key={group.provider} label={group.label}>
+                    {group.models.map(m => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
-              </optgroup>
-            ))}
-          </select>
-          <p className="mt-1.5 text-xs text-gray-400">
-            選択中: {MODEL_GROUPS.flatMap(g => g.models).find(m => m.value === form.model)?.label ?? form.model}
-          </p>
-        </Section>
+              </select>
+              <p className="mt-1.5 text-xs text-gray-400">
+                選択中: {currentLabel}
+              </p>
+            </Section>
+          )
+        })()}
 
         {/* データバックアップ */}
         <Section title="データバックアップ" description="全データをJSONファイルで保存・復元できます">

@@ -9,26 +9,21 @@ import {
 import { useAppStore } from '../store/useAppStore'
 import CommandPalette from './CommandPalette'
 import FeedbackModal from './FeedbackModal'
-import { validateApiKey } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel } from '../lib/ai'
 import { getProvider, getApiKeyForModel, detectProviderFromKey, DEFAULT_MODEL_FOR_PROVIDER } from '../types'
 
-const MODEL_GROUPS = [
-  {
-    label: 'Google Gemini',
-    provider: 'gemini' as const,
-    models: [
-      { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新・高速）' },
-      { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-      { value: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-      { value: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
-      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-      { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-      { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
-      { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-      { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-    ],
-  },
+const FALLBACK_GEMINI_MODELS = [
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量枠・推奨）' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（軽量・高速）' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（安定・1,500回/日）' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高性能）' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（実験版・20回/日）' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（実験版・20回/日）' },
+  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版・20回/日）' },
+  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash（実験版・20回/日）' },
+]
+
+const STATIC_MODEL_GROUPS = [
   {
     label: 'OpenAI',
     provider: 'openai' as const,
@@ -240,7 +235,13 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
           newModel = result.detectedModel
         }
       }
-      await saveSettings({ ...settings, [detectedField]: trimmed, model: newModel })
+      const updatedSettings = {
+        ...settings,
+        [detectedField]: trimmed,
+        model: newModel,
+        ...(result.availableModels && result.availableModels.length > 0 ? { availableGeminiModels: result.availableModels } : {}),
+      }
+      await saveSettings(updatedSettings)
       if (newModel !== selectedModel) setSelectedModel(newModel)
       setKeyStatus('ok')
       const label = detected === 'openai' ? 'OpenAI' : detected === 'anthropic' ? 'Anthropic' : 'Gemini'
@@ -254,6 +255,9 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
   }
 
   const hasKey = !!currentKey
+  const geminiModels = (settings.availableGeminiModels && settings.availableGeminiModels.length > 0)
+    ? settings.availableGeminiModels.map(m => ({ value: m, label: formatGeminiModelLabel(m) }))
+    : FALLBACK_GEMINI_MODELS
 
   return (
     <aside className="w-52 shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
@@ -328,7 +332,12 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
               onChange={e => handleModelChange(e.target.value)}
               className="w-full text-xs border border-gray-200 rounded-lg pl-2.5 pr-6 py-1.5 bg-gray-50 focus:outline-none focus:ring-1 focus:ring-indigo-300 appearance-none cursor-pointer"
             >
-              {MODEL_GROUPS.map(group => (
+              <optgroup label="Google Gemini">
+                {geminiModels.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </optgroup>
+              {STATIC_MODEL_GROUPS.map(group => (
                 <optgroup key={group.provider} label={group.label}>
                   {group.models.map(m => (
                     <option key={m.value} value={m.value}>{m.label}</option>
