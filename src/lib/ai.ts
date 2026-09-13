@@ -374,11 +374,10 @@ async function generateTextStream(
       }
       if (textAcc) return textAcc
     } catch (chatErr) {
-      if (isModelNotFoundError(chatErr)) throw chatErr
-      console.warn(`[Gemini] Chat stream failed for ${targetModel}, falling back to generateContentStream...`, chatErr)
+      console.warn(`[Gemini] Chat stream failed for ${targetModel}, trying direct content stream...`, chatErr)
     }
 
-    // 2. チャット形式が非対応のモデルの場合、generateContentStream で直接送信
+    // 2. チャットストリームが非対応/404の場合、generateContentStream で直接ストリーミング試行
     try {
       textAcc = ''
       const contents = [
@@ -393,18 +392,24 @@ async function generateTextStream(
       }
       if (textAcc) return textAcc
     } catch (streamErr) {
-      if (isModelNotFoundError(streamErr)) throw streamErr
-      console.warn(`[Gemini] generateContentStream failed for ${targetModel}, falling back to single generateContent...`, streamErr)
+      console.warn(`[Gemini] generateContentStream failed for ${targetModel}, falling back to robust single generateContent...`, streamErr)
     }
 
-    // 3. ストリーミング非対応モデルの場合、単発生成で取得して一度に送出
+    // 3. ストリーミングエンドポイントが非対応/404の場合、確実に動く通常の generateContent で生成
     const contents = [
       ...history,
       { role: 'user', parts: geminiParts },
     ]
     const directRes = await withRetry(() => genModel.generateContent({ contents }), onWait)
     const finalTxt = directRes.response.text()
-    if (finalTxt) onChunk(finalTxt)
+    if (finalTxt) {
+      // 擬似ストリーミング（小刻みに送出してUIをスムーズにする）
+      const chunkSize = 6
+      for (let i = 0; i < finalTxt.length; i += chunkSize) {
+        onChunk(finalTxt.slice(i, i + chunkSize))
+        await sleep(25)
+      }
+    }
     return finalTxt
   }
 
@@ -412,17 +417,9 @@ async function generateTextStream(
     return await executeGeminiStream(activeModel)
   } catch (err) {
     if (isModelNotFoundError(err)) {
-      console.warn(`[Gemini] Model ${activeModel} not found or unsupported. Auto-healing to working model...`)
+      console.warn(`[Gemini] Model ${activeModel} not found. Auto-healing to available model...`)
       activeModel = await autoHealGeminiModel(apiKey, activeModel)
-      try {
-        return await executeGeminiStream(activeModel)
-      } catch (retryErr) {
-        // フォールバック先でも失敗した場合は gemini-2.0-flash で最終試行
-        if (activeModel !== 'gemini-2.0-flash') {
-          return await executeGeminiStream('gemini-2.0-flash')
-        }
-        throw retryErr
-      }
+      return await executeGeminiStream(activeModel)
     }
     throw err
   }
