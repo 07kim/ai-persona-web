@@ -834,7 +834,82 @@ ${JSON.stringify(summary, null, 2)}`
 
 // ── 対話機能 ──
 
-// 参加者の発言生成（ストリーミング）
+/**
+ * 直前の発言内容、参加者のスタンス（対立軸・関心）、および過去の発言回数から、
+ * 最も自然に反応すべき次の発言者をローカルで即座に（0秒・API消費0）決定する
+ */
+export function determineNextSpeakerLocally(
+  participants: DeliberationParticipant[],
+  history: Array<{ name: string; content: string; isUser?: boolean }>,
+  speakerCounts: Record<string, number>,
+): DeliberationParticipant {
+  const speakers = participants.filter(p => !p.isFacilitator)
+  if (speakers.length === 0) return participants[0]
+  if (speakers.length === 1) return speakers[0]
+
+  const lastMsg = history.filter(m => !m.isUser).at(-1)
+  const lastSpeakerName = lastMsg?.name ?? ''
+  const lastText = lastMsg?.content ?? ''
+
+  // 1. 直前の発言者が特定の人を名指し（指名）しているかチェック
+  if (lastText) {
+    for (const p of speakers) {
+      if (p.name !== lastSpeakerName && (lastText.includes(`${p.name}さん`) || lastText.includes(p.name))) {
+        return p
+      }
+    }
+  }
+
+  // 2. 候補リスト（直前の発言者以外）
+  const candidates = speakers.filter(p => p.name !== lastSpeakerName)
+  const pool = candidates.length > 0 ? candidates : speakers
+
+  // 最も発言回数が少ない回数を取得
+  const minCount = Math.min(...pool.map(p => speakerCounts[p.id] ?? 0))
+
+  const scored = pool.map(p => {
+    const count = speakerCounts[p.id] ?? 0
+    let score = 50
+
+    // 発言数が少ない人へのブースト（全員が均等に参加できるように）
+    const countDiff = count - minCount
+    score -= countDiff * 35
+
+    // 未発言者には超特大ボーナス
+    if (count === 0) score += 120
+
+    const roleLower = (p.role + ' ' + p.name).toLowerCase()
+
+    // 文脈・対立軸キーワード判定
+    if (lastText) {
+      // 理想論・体験・デザイン -> 実装・技術・ペルソナ感覚が反応しやすい
+      if (lastText.includes('体験') || lastText.includes('デザイン') || lastText.includes('理想') || lastText.includes('UI') || lastText.includes('ユーザー')) {
+        if (roleLower.includes('エンジニア') || roleLower.includes('開発') || roleLower.includes('技術')) score += 30
+        if (p.type === 'persona') score += 25
+      }
+      // 技術・制約・工数 -> 企画・ビジネス・デザイナーが反応しやすい
+      if (lastText.includes('工数') || lastText.includes('コスト') || lastText.includes('技術') || lastText.includes('難しい') || lastText.includes('実装')) {
+        if (roleLower.includes('企画') || roleLower.includes('マーケ') || roleLower.includes('pm') || roleLower.includes('プロダクト')) score += 30
+        if (roleLower.includes('デザイナー')) score += 25
+      }
+      // 哲学・抽象論・問い -> 現場職・生活感のあるペルソナが反応しやすい
+      if (lastText.includes('本質') || lastText.includes('定義') || lastText.includes('問い') || lastText.includes('構造') || lastText.includes('そもそも')) {
+        if (p.type === 'persona') score += 35
+        if (roleLower.includes('デザイナー') || roleLower.includes('芸人') || roleLower.includes('企画')) score += 25
+      }
+    }
+
+    // ランダム揺らぎ（毎回固定順にならないように）
+    score += Math.random() * 15
+
+    return { participant: p, score }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0].participant
+}
+
+// 参加者の発言生成（ストリーミング・短文テンポ重視・ハイブリッド文脈）
 export async function generateDeliberationReply(
   _participant: DeliberationParticipant,
   systemPrompt: string,
@@ -846,23 +921,32 @@ export async function generateDeliberationReply(
   materials?: MaterialItem[],
 ): Promise<string> {
   const materialContext = buildMaterialContext(materials ?? [])
-  const fullSystemPrompt = systemPrompt + materialContext
-  const historyText = history.length > 0
-    ? `\n## これまでの発言\n${history.map(m => `${m.name}: ${m.content}`).join('\n\n')}\n`
+  const fullSystemPrompt = `${systemPrompt}${materialContext}
+
+【対話ルール】
+1. 自分の立場・専門性・性格（ペルソナ）を絶対に崩さず、その人らしい口調と視点で発言してください。
+2. 挨拶や長々しい前置きは一切不要。要点・反論・共感・疑問からスパッと言い始めてください。
+3. 長文の講釈は禁止。リアルな会議のように「1〜3文（80〜150文字程度）」でテンポよく端的に述べてください。
+4. 直前の発言に対して、【賛同】【懸念・反論】【独自の視点・問いかけ】のいずれかのスタンスを明確にしてください。`
+
+  // ハイブリッド文脈：直近5件のやり取りを抽出
+  const recentHistory = history.slice(-5)
+  const historyText = recentHistory.length > 0
+    ? `\n## 直近のやり取り\n${recentHistory.map(m => `${m.name}: ${m.content}`).join('\n\n')}\n`
     : ''
 
   const lastSpeaker = history.filter(m => !m.isUser).at(-1)
   const reactionGuide = lastSpeaker
-    ? `直前は「${lastSpeaker.name}」の発言です。内容を踏まえたうえで、あなた自身の専門・生活経験・価値観から独自の視点を出してください。単純な同意・繰り返しは禁止。違和感があれば反論し、知らないことは知らないと言いながら自分の切り口で話してください。`
-    : `あなたの専門・生活経験から、このテーマに対する率直な第一声を出してください。`
+    ? `直前は「${lastSpeaker.name}」の発言です。その内容を受け、あなたの立場から賛同・懸念・反論、または別の切り口を1〜3文（80〜150文字）で端的に述べてください。`
+    : `あなたの立場から、このテーマに対する率直な第一声を1〜3文（80〜150文字）で端的に述べてください。`
 
-  const userMessage = `テーマ「${topic}」の議論です。${historyText}\n${reactionGuide}\n\n300文字以内、口語体で。`
+  const userMessage = `テーマ「${topic}」の議論です。${historyText}\n${reactionGuide}`
 
   const images = extractImageParts(materials ?? [])
   return generateTextStream([{ role: 'user', content: userMessage }], fullSystemPrompt, settings, onChunk, onWait, images)
 }
 
-// ファシリテーターの発言生成
+// ファシリテーターの発言生成（要点整理＋未発言者へのパス）
 export async function generateFacilitatorDeliberationReply(
   allParticipants: DeliberationParticipant[],
   topic: string,
@@ -874,62 +958,14 @@ export async function generateFacilitatorDeliberationReply(
   const others = allParticipants.filter(p => p.id !== FACILITATOR_ID)
   const systemPrompt = buildFacilitatorSystemPrompt(others.map(p => p.name))
 
-  const historyText = history.length > 0
-    ? `\n## これまでの発言\n${history.map(m => `${m.name}: ${m.content}`).join('\n\n')}\n`
+  const recentHistory = history.slice(-6)
+  const historyText = recentHistory.length > 0
+    ? `\n## 直近の発言\n${recentHistory.map(m => `${m.name}: ${m.content}`).join('\n\n')}\n`
     : ''
 
-  const userMessage = `テーマ「${topic}」について議論しています。${historyText}\nファシリテーターとして、議論の流れを整理し、特定の参加者に発言を促してください。必ず最後に「〇〇さん、〜についてはどうでしょうか？」のように次の発言者を名指ししてください。`
+  const userMessage = `テーマ「${topic}」について議論しています。${historyText}\nファシリテーターとして、これまでの流れを1〜2文で軽く整理し、まだ発言の少ない参加者や異なる視点を持つ参加者を「〇〇さん、〜についてはどうでしょうか？」のように名指しで促してください（120文字以内）。`
 
   return generateTextStream([{ role: 'user', content: userMessage }], systemPrompt, settings, onChunk, onWait)
-}
-
-// ルーター: 次の発言者を決定
-export async function selectNextSpeaker(
-  participants: DeliberationParticipant[],
-  topic: string,
-  history: Array<{ name: string; content: string }>,
-  settings: Settings,
-  onWait?: (remainingSecs: number, attempt: number) => void,
-): Promise<{ nextParticipantId: string; concluded: boolean }> {
-  const participantList = participants.map(p => `- id: "${p.id}", 名前: ${p.name}, 役割: ${p.role}`).join('\n')
-  const historyText = history.slice(-8).map(m => `${m.name}: ${m.content}`).join('\n\n')
-
-  const prompt = `テーマ「${topic}」の議論です。
-
-## 参加者
-${participantList}
-
-## 直近の発言
-${historyText}
-
-次に発言すべき参加者を選んでください。同じ人が連続して発言しないようにしてください。
-議論が十分に深まり結論が出た場合は concluded: true にしてください。
-
-JSON: {"nextParticipantId": "...", "concluded": false}`
-
-  // onWaitが必要なためGeminiは直接呼ぶ。他プロバイダーはgenerateText経由
-  const model = getModelName(settings)
-  const provider = getProvider(model)
-  let text: string
-  if (provider === 'gemini') {
-    const apiKey = getApiKeyForModel(settings, model)
-    const client = new GoogleGenerativeAI(apiKey)
-    const genModel = client.getGenerativeModel({
-      model,
-      systemInstruction: 'あなたは議論のファシリテーターです。会話の流れを読み、次に発言すべき参加者を選んでください。',
-      generationConfig: { responseMimeType: 'application/json' },
-    })
-    const result = await withRetry(() => genModel.generateContent(prompt), onWait)
-    text = result.response.text()
-  } else {
-    text = await generateText(prompt, 'あなたは議論のファシリテーターです。会話の流れを読み、次に発言すべき参加者を選んでください。', settings, true)
-  }
-
-  const parsed = JSON.parse(text)
-  return {
-    nextParticipantId: parsed.nextParticipantId ?? participants[0].id,
-    concluded: parsed.concluded ?? false,
-  }
 }
 
 // 成果物（議事録）を更新

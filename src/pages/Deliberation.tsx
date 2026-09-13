@@ -9,7 +9,7 @@ import { useAppStore } from '../store/useAppStore'
 import {
   generateDeliberationReply,
   generateFacilitatorDeliberationReply,
-  selectNextSpeaker,
+  determineNextSpeakerLocally,
   updateDeliberationArtifact,
   generateDeliberationSummary,
   generateDesignSpec,
@@ -207,7 +207,7 @@ export default function Deliberation() {
       }
 
       setCurrentSpeaker(participant.name)
-      setLoadingPhase(`${participant.name}が発言を考えています...`)
+      setLoadingPhase(`${participant.name}が発言中...`)
       const msgId = generateId()
       addMessage({
         id: msgId, participantId: participant.id, participantName: participant.name,
@@ -215,7 +215,7 @@ export default function Deliberation() {
       })
 
       try {
-        const history = messagesRef.current.filter(m => m.id !== msgId).slice(-10)
+        const history = messagesRef.current.filter(m => m.id !== msgId)
           .map(m => ({ name: m.participantName, content: m.content, isUser: m.isUser }))
         let accumulated = ''
         if (participant.isFacilitator) {
@@ -229,8 +229,11 @@ export default function Deliberation() {
           }, onRateWait, materials)
         }
         updateStreamingMessage(msgId, accumulated, true)
-        turnRef.current += 1
-        setCurrentTurn(turnRef.current)
+        // 実際の発言数とターン数を厳密に同期
+        const completedCount = messagesRef.current.filter(m => !m.isUser && !m.isStreaming).length
+        turnRef.current = completedCount
+        setCurrentTurn(completedCount)
+        setSessionError('') // 発言成功時に古いエラーを自動クリア
         setCurrentSpeaker(null)
         setLoadingPhase('')
         return true
@@ -243,8 +246,7 @@ export default function Deliberation() {
         const s = String(e)
         // 致命的エラーは中断
         if (s.includes('free_tier') || s.includes('FreeTier') || s.includes('limit: 0') ||
-            s.includes('API_KEY') || s.includes('401') || s.includes('403') ||
-            s.includes('NOT_FOUND') || s.includes('404')) {
+            s.includes('API_KEY') || s.includes('401') || s.includes('403')) {
           return false
         }
         // 非致命的エラーはこの発言をスキップして継続
@@ -257,7 +259,7 @@ export default function Deliberation() {
 
     try {
       while (isRunningRef.current && turnRef.current < maxTurns) {
-        // === 次の発言者を決定 ===
+        // === 次の発言者を決定（API消費ゼロ・対立スタンス＆未発言者判定） ===
         let next: DeliberationParticipant
 
         // ファシリテーターは facInterval 発言ごとに「まとめ＋論点提示」を挿入
@@ -268,29 +270,16 @@ export default function Deliberation() {
         if (isFacilitatorTurn) {
           next = facilitator!
         } else {
-          try {
-            setLoadingPhase('次の発言者を選んでいます...')
-            const history = messagesRef.current.slice(-12).map(m => ({ name: m.participantName, content: m.content }))
-            const res = await selectNextSpeaker(routerPool, topic, history, settings, onRateWait)
-            // 十分に議論が深まり結論が出たら終了
-            if (autoEnd && res.concluded && turnRef.current >= routerPool.length) {
-              endReason = 'concluded'
-              break
+          // 各参加者の過去発言数を集計
+          const speakerCounts: Record<string, number> = {}
+          messagesRef.current.forEach(m => {
+            if (!m.isUser && m.participantId) {
+              speakerCounts[m.participantId] = (speakerCounts[m.participantId] ?? 0) + 1
             }
-            next = routerPool.find(p => p.id === res.nextParticipantId)
-              ?? routerPool[turnRef.current % routerPool.length]
-          } catch (e) {
-            const s = String(e)
-            if (s.includes('free_tier') || s.includes('FreeTier') || s.includes('limit: 0') ||
-                s.includes('API_KEY') || s.includes('401') || s.includes('403')) {
-              setSessionError(parseUserFriendlyError(e))
-              endReason = 'error'
-              break
-            }
-            // ルーター失敗時は順番でフォールバック
-            next = routerPool[turnRef.current % routerPool.length]
-            console.warn('router fallback:', e)
-          }
+          })
+
+          const history = messagesRef.current.slice(-6).map(m => ({ name: m.participantName, content: m.content, isUser: m.isUser }))
+          next = determineNextSpeakerLocally(routerPool, history, speakerCounts)
         }
 
         if (!isRunningRef.current) break
@@ -298,17 +287,16 @@ export default function Deliberation() {
         const ok = await speak(next)
         if (!ok) { endReason = 'error'; break }
 
-        // 議事録は5発言ごとに更新（リクエスト分散のため遅延）
-        if (turnRef.current % 5 === 0) {
-          await sleep(3000)
-          if (isRunningRef.current) triggerArtifactUpdate(messagesRef.current)
-        } else {
-          await sleep(2000)
+        // ファシリテーター発言の節目でのみ議事録を自動更新（API消費を節約）
+        if (isFacilitatorTurn && isRunningRef.current) {
+          triggerArtifactUpdate(messagesRef.current)
         }
+
+        await sleep(1500)
       }
 
       // 終了理由の確定
-      if (endReason !== 'concluded' && endReason !== 'error') {
+      if (endReason !== 'error') {
         endReason = turnRef.current >= maxTurns ? 'cap' : 'paused'
       }
       if (pausedByUserRef.current) endReason = 'paused'
