@@ -10,7 +10,7 @@ import {
 import { useAppStore } from '../store/useAppStore'
 import CommandPalette from './CommandPalette'
 import FeedbackModal from './FeedbackModal'
-import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels, FALLBACK_GEMINI_MODELS } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels, filterUsefulGeminiModels, FALLBACK_GEMINI_MODELS } from '../lib/ai'
 import { getProvider, getApiKeyForModel, detectProviderFromKey, DEFAULT_MODEL_FOR_PROVIDER } from '../types'
 
 const STATIC_MODEL_GROUPS = [
@@ -293,8 +293,11 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
   }
 
   const hasKey = !!currentKey
-  const geminiModels = (settings.availableGeminiModels && settings.availableGeminiModels.length > 0)
-    ? settings.availableGeminiModels.map(m => ({ value: m, label: formatGeminiModelLabel(m) }))
+  const rawGeminiModels = settings.availableGeminiModels && settings.availableGeminiModels.length > 0
+    ? filterUsefulGeminiModels(settings.availableGeminiModels)
+    : []
+  const geminiModels = rawGeminiModels.length > 0
+    ? rawGeminiModels.map(m => ({ value: m, label: formatGeminiModelLabel(m) }))
     : FALLBACK_GEMINI_MODELS
 
   return (

@@ -382,7 +382,50 @@ async function generateTextStream(
   }
 }
 
-/** Geminiで利用可能なモデルIDの一覧を取得する（テキスト対話可能なモデルを抽出） */
+/** Geminiの全取得モデルから、実用的・主要な対話モデル（2.0系、1.5系、2.5系、3.7/3.5系）のみを厳選・ソートする */
+export function filterUsefulGeminiModels(models: string[]): string[] {
+  if (!models || models.length === 0) return []
+
+  // 明示的に除外するキーワード（特殊用途・内部・Gemma・雑多な中間版）
+  const excludedKeywords = [
+    'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
+    'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
+    'gemma', 'deep-research', 'deep_research', 'deepresearch',
+    'computer-use', 'computer_use', 'computeruse',
+    'customtools', 'custom-tools', 'omni', 'antigravity',
+    'latest', '3.8', '3.6', '3.1', '3-flash-preview', '3.5-flash-lite',
+  ]
+
+  const filtered = models
+    .map(m => m.replace(/^models\//, ''))
+    .filter(m => {
+      const lower = m.toLowerCase()
+      if (!lower.startsWith('gemini')) return false
+      return !excludedKeywords.some(kw => lower.includes(kw))
+    })
+
+  // 重複除去
+  const unique = Array.from(new Set(filtered))
+
+  // 優先順位スコア（2.0 Flash推奨 > 2.0 Flash Lite > 1.5 Flash > 1.5 Pro > 2.5系 > 3.7 Flash > 3.5 Flash）
+  const getOrderScore = (name: string): number => {
+    const lower = name.toLowerCase()
+    if (lower === 'gemini-2.0-flash' || lower === 'gemini-2.0-flash-exp') return 100
+    if (lower === 'gemini-2.0-flash-lite') return 95
+    if (lower === 'gemini-1.5-flash') return 90
+    if (lower === 'gemini-1.5-pro') return 85
+    if (lower === 'gemini-2.5-flash') return 80
+    if (lower === 'gemini-2.5-pro') return 75
+    if (lower === 'gemini-2.5-flash-lite') return 70
+    if (lower === 'gemini-3.7-flash') return 65
+    if (lower === 'gemini-3.5-flash') return 60
+    return 10
+  }
+
+  return unique.sort((a, b) => getOrderScore(b) - getOrderScore(a))
+}
+
+/** Geminiで利用可能なモデルIDの一覧を取得する（主要なテキスト対話モデルのみを厳選） */
 export async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`)
@@ -390,71 +433,24 @@ export async function fetchAvailableGeminiModels(apiKey: string): Promise<string
     const data = await res.json()
     if (!data.models || !Array.isArray(data.models)) return []
 
-    // 特殊用途（音声・画像・動画・埋め込み・ロボティクス等）のみ除外
-    const excluded = [
-      'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
-      'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
-    ]
-
-    return data.models
+    const candidateNames = data.models
       .filter((m: { supportedGenerationMethods?: string[] }) =>
         Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent')
       )
       .map((m: { name?: string }) => (m.name || '').replace(/^models\//, ''))
-      .filter((m: string) => m && !excluded.some(kw => m.toLowerCase().includes(kw)))
+
+    const refined = filterUsefulGeminiModels(candidateNames)
+    return refined.length > 0 ? refined : FALLBACK_GEMINI_MODELS.map(m => m.value)
   } catch {
     return []
   }
 }
 
-/** 画像・音声・翻訳・特殊用途モデルを除外し、テキスト対話に最適なモデルを動的スコアリングで選定する */
+/** テキスト対話に最適なモデルを自動選定する */
 export function selectBestGeminiModel(models: string[]): string | undefined {
   if (!models || models.length === 0) return undefined
-
-  // 特殊用途モデルを除外
-  const excludedKeywords = [
-    'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
-    'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
-  ]
-
-  const textModels = models.filter(m => {
-    const lower = m.toLowerCase()
-    return !excludedKeywords.some(kw => lower.includes(kw))
-  })
-
-  if (textModels.length === 0) return models[0]
-
-  // バージョン番号を抽出する（例: "gemini-3.7-flash" -> 3.7, "gemini-2.5-pro" -> 2.5, "gemini-1.5-flash-8b" -> 1.5）
-  function parseVersion(name: string): number {
-    const match = name.match(/(\d+(?:\.\d+)?)/)
-    return match ? parseFloat(match[1]) : 0
-  }
-
-  // スコアリング（2.0 Flash / 1.5 Flash（大容量枠・1,500回/日）最優先 > その他Flash > Flash Lite > Pro）
-  function getScore(name: string): number {
-    const lower = name.toLowerCase()
-    const ver = parseVersion(lower)
-
-    // 大容量1500回/日の2.0/1.5 Flashを最優先
-    if (lower === 'gemini-2.0-flash' || lower === 'gemini-2.0-flash-exp') return 2000
-    if (lower === 'gemini-1.5-flash') return 1800
-    if (lower === 'gemini-1.5-pro') return 1700
-    if (lower === 'gemini-2.0-flash-lite') return 1600
-
-    let base = 500
-    if (lower.includes('flash') && !lower.includes('lite') && !lower.includes('8b')) {
-      base = 1000
-    } else if (lower.includes('flash') && (lower.includes('lite') || lower.includes('8b'))) {
-      base = 800
-    } else if (lower.includes('pro')) {
-      base = 600
-    }
-
-    return base + ver * 10
-  }
-
-  const sorted = [...textModels].sort((a, b) => getScore(b) - getScore(a))
-  return sorted[0]
+  const useful = filterUsefulGeminiModels(models)
+  return useful[0] ?? models[0]
 }
 
 /** 優先度順のGemini推奨モデル候補（フォールバック用） */
@@ -465,11 +461,12 @@ const GEMINI_PREFERRED_ORDER = [
   'gemini-1.5-pro',
   'gemini-2.5-flash',
   'gemini-2.5-pro',
+  'gemini-2.5-flash-lite',
   'gemini-3.7-flash',
   'gemini-3.5-flash',
 ]
 
-/** デフォルトで表示するGeminiモデル一覧（API未接続時やフォールバック用） */
+/** デフォルトで表示するGemini主要モデル一覧（API未接続時やフォールバック用） */
 export const FALLBACK_GEMINI_MODELS = [
   { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
   { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
@@ -477,6 +474,7 @@ export const FALLBACK_GEMINI_MODELS = [
   { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度）' },
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（最新プレビュー）' },
   { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（最新高精度プレビュー）' },
+  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite（最新軽量プレビュー）' },
   { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版）' },
   { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash（実験版）' },
 ]
@@ -484,17 +482,15 @@ export const FALLBACK_GEMINI_MODELS = [
 /** モデルIDを分かりやすい日本語ラベルに変換する */
 export function formatGeminiModelLabel(modelId: string): string {
   const m = modelId.toLowerCase()
-  if (m === 'gemini-2.0-flash') return 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）'
+  if (m === 'gemini-2.0-flash' || m === 'gemini-2.0-flash-exp') return 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）'
   if (m === 'gemini-2.0-flash-lite') return 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）'
   if (m === 'gemini-1.5-flash') return 'Gemini 1.5 Flash（大容量 1,500回/日）'
   if (m === 'gemini-1.5-pro') return 'Gemini 1.5 Pro（高精度）'
   if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash（最新プレビュー）'
   if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro（最新高精度プレビュー）'
+  if (m === 'gemini-2.5-flash-lite') return 'Gemini 2.5 Flash Lite（最新軽量プレビュー）'
   if (m === 'gemini-3.7-flash') return 'Gemini 3.7 Flash（最新実験版）'
   if (m === 'gemini-3.5-flash') return 'Gemini 3.5 Flash（実験版）'
-  if (m.includes('3.8')) return `${modelId}（実験プレビュー・制限 20回/日）`
-  if (m.includes('3.7') || m.includes('3.5') || m.includes('3-flash')) return `${modelId}（プレビュー）`
-  if (m.includes('3.1-pro')) return `${modelId}（高精度プレビュー）`
 
   return modelId
     .split('-')

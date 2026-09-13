@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { validateApiKey, formatGeminiModelLabel, FALLBACK_GEMINI_MODELS } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel, filterUsefulGeminiModels, FALLBACK_GEMINI_MODELS } from '../lib/ai'
 import { getProvider } from '../types'
 import { Eye, EyeOff, CheckCircle, AlertCircle, Loader, Download, Upload, Database } from 'lucide-react'
 
@@ -143,7 +143,7 @@ export default function Settings() {
           placeholder="AIza..."
           testing={testing === 'gemini'}
           testResult={testResults.gemini}
-          availableModels={form.availableGeminiModels}
+          availableModels={form.availableGeminiModels && form.availableGeminiModels.length > 0 ? filterUsefulGeminiModels(form.availableGeminiModels) : undefined}
           onToggleShow={() => setShowKeys(s => ({ ...s, gemini: !s.gemini }))}
           onChange={v => handleChange('apiKey', v)}
           onTest={() => handleTest('gemini')}
@@ -179,8 +179,11 @@ export default function Settings() {
 
         {/* モデル */}
         {(() => {
-          const geminiModels = (form.availableGeminiModels && form.availableGeminiModels.length > 0)
-            ? form.availableGeminiModels.map(m => ({ value: m, label: formatGeminiModelLabel(m) }))
+          const rawUseful = form.availableGeminiModels && form.availableGeminiModels.length > 0
+            ? filterUsefulGeminiModels(form.availableGeminiModels)
+            : []
+          const geminiModels = rawUseful.length > 0
+            ? rawUseful.map(m => ({ value: m, label: formatGeminiModelLabel(m) }))
             : FALLBACK_GEMINI_MODELS
           const allModels = [...geminiModels, ...STATIC_MODEL_GROUPS.flatMap(g => g.models)]
           const currentLabel = allModels.find(m => m.value === form.model)?.label ?? form.model
