@@ -7,6 +7,7 @@ import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Persona, Question, SurveyAnswer, Settings, DeliberationParticipant, ArtifactData, DeliberationSummary, MaterialItem, DesignSpec, DesignScreen } from '../types'
 import { getProvider, getApiKeyForModel } from '../types'
+import { useAppStore } from '../store/useAppStore'
 import { sleep } from './utils'
 import { getPrompt } from './prompts'
 import { buildFacilitatorSystemPrompt, FACILITATOR_ID } from './presetRoles'
@@ -126,11 +127,57 @@ function getModelName(settings: Settings): string {
   return 'gemini-2.5-flash'
 }
 
-// ── プロバイダー共通ユーティリティ ──
-
 type Message = { role: 'user' | 'assistant'; content: string }
 
-/** テキストを1回生成して返す（プロバイダー自動切替） */
+function isModelNotFoundError(err: unknown): boolean {
+  const s = String(err)
+  return s.includes('NOT_FOUND') || s.includes('404') || s.includes('models/')
+}
+
+/** 実行時にモデルが見つからなかった場合に利用可能な有効モデルを自動特定し、設定を自己修復する */
+async function autoHealGeminiModel(apiKey: string, failedModel: string): Promise<string> {
+  let workingModel: string | undefined
+
+  try {
+    const available = await fetchAvailableGeminiModels(apiKey)
+    const valid = available.filter(m => m !== failedModel)
+    if (valid.length > 0) {
+      workingModel = selectBestGeminiModel(valid)
+    }
+  } catch {}
+
+  if (!workingModel) {
+    const client = new GoogleGenerativeAI(apiKey)
+    for (const cand of GEMINI_PREFERRED_ORDER) {
+      if (cand === failedModel) continue
+      try {
+        const m = client.getGenerativeModel({ model: cand })
+        await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+        workingModel = cand
+        break
+      } catch (e) {
+        if (!isModelNotFoundError(e)) {
+          workingModel = cand
+          break
+        }
+      }
+    }
+  }
+
+  const fallback = workingModel || 'gemini-1.5-flash'
+
+  // アプリストアの設定も自動修復して永続化
+  try {
+    const currentSettings = useAppStore.getState().settings
+    if (currentSettings.model === failedModel || !currentSettings.model) {
+      useAppStore.getState().saveSettings({ ...currentSettings, model: fallback })
+    }
+  } catch {}
+
+  return fallback
+}
+
+/** テキストを1回生成して返す（プロバイダー自動切替・404自動自己修復） */
 async function generateText(
   prompt: string,
   systemPrompt: string,
@@ -170,15 +217,28 @@ async function generateText(
     return block.type === 'text' ? block.text : ''
   }
 
-  // Gemini
+  // Gemini（404エラー時は自動でモデルを切り替えてリトライ）
   const client = new GoogleGenerativeAI(apiKey)
-  const genModel = client.getGenerativeModel({
-    model,
-    systemInstruction: systemPrompt,
-    ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
-  })
-  const result: GenerateContentResult = await withRetry(() => genModel.generateContent(prompt))
-  return result.response.text()
+  let activeModel = model
+  const runGemini = async (targetModel: string) => {
+    const genModel = client.getGenerativeModel({
+      model: targetModel,
+      systemInstruction: systemPrompt,
+      ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
+    })
+    const result: GenerateContentResult = await withRetry(() => genModel.generateContent(prompt))
+    return result.response.text()
+  }
+
+  try {
+    return await runGemini(activeModel)
+  } catch (err) {
+    if (isModelNotFoundError(err)) {
+      activeModel = await autoHealGeminiModel(apiKey, activeModel)
+      return await runGemini(activeModel)
+    }
+    throw err
+  }
 }
 
 /** 添付資料から画像パーツを抽出する（base64 data URL → { mimeType, data } ） */
@@ -193,7 +253,7 @@ export function extractImageParts(materials: MaterialItem[]): { mimeType: string
     .filter((x): x is NonNullable<typeof x> => x !== null)
 }
 
-/** ストリーミングでテキストを生成し、チャンクごとに onChunk を呼ぶ */
+/** ストリーミングでテキストを生成し、チャンクごとに onChunk を呼ぶ（404自動自己修復） */
 async function generateTextStream(
   messages: Message[],
   systemPrompt: string,
@@ -273,21 +333,37 @@ async function generateTextStream(
     return full
   }
 
-  // Gemini
+  // Gemini（404エラー時は自動でモデルを切り替えてリトライ）
   const client = new GoogleGenerativeAI(apiKey)
-  const genModel = client.getGenerativeModel({ model, systemInstruction: systemPrompt })
+  let activeModel = model
   const lastUser = messages.filter(m => m.role === 'user').at(-1)?.content ?? ''
   const history = messages.slice(0, -1).map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: m.content }],
   }))
-  const chat = genModel.startChat({ history })
-  // Gemini: 最後のメッセージに画像パーツを追加
   const geminiParts: Part[] = [
     { text: lastUser },
     ...images.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
   ]
-  const result = await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
+
+  const runGeminiStream = async (targetModel: string) => {
+    const genModel = client.getGenerativeModel({ model: targetModel, systemInstruction: systemPrompt })
+    const chat = genModel.startChat({ history })
+    return await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
+  }
+
+  let result
+  try {
+    result = await runGeminiStream(activeModel)
+  } catch (err) {
+    if (isModelNotFoundError(err)) {
+      activeModel = await autoHealGeminiModel(apiKey, activeModel)
+      result = await runGeminiStream(activeModel)
+    } else {
+      throw err
+    }
+  }
+
   for await (const chunk of result.stream) {
     const t = chunk.text()
     full += t
