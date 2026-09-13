@@ -10,15 +10,8 @@ import {
 import { useAppStore } from '../store/useAppStore'
 import CommandPalette from './CommandPalette'
 import FeedbackModal from './FeedbackModal'
-import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels, FALLBACK_GEMINI_MODELS } from '../lib/ai'
 import { getProvider, getApiKeyForModel, detectProviderFromKey, DEFAULT_MODEL_FOR_PROVIDER } from '../types'
-
-const FALLBACK_GEMINI_MODELS = [
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
-  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（大容量 1,500回/日・高安定）' },
-  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度・50回/日）' },
-]
 
 const STATIC_MODEL_GROUPS = [
   {

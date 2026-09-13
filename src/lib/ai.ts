@@ -126,19 +126,7 @@ async function withRetry<T>(
 }
 
 function getModelName(settings: Settings): string {
-  if (settings.model && settings.model !== 'default') {
-    const m = settings.model.toLowerCase()
-    // 旧20回制限モデル（2.5系・3.x系プレビュー等）が残っている場合のみ、利用可能な大容量モデルへ自動移行
-    const isOldRestricted = m.includes('2.5') || m.includes('3.7') || m.includes('3.5') || m.includes('3-flash') || m.includes('3.8')
-    if (isOldRestricted) {
-      if (settings.availableGeminiModels && settings.availableGeminiModels.length > 0) {
-        const best = selectBestGeminiModel(settings.availableGeminiModels)
-        if (best) return best
-      }
-      return 'gemini-2.0-flash'
-    }
-    return settings.model
-  }
+  if (settings.model && settings.model !== 'default') return settings.model
   return 'gemini-2.0-flash'
 }
 
@@ -394,7 +382,7 @@ async function generateTextStream(
   }
 }
 
-/** Geminiで利用可能なモデルIDの一覧を取得する（20回制限の実験モデルや不要モデルは除外） */
+/** Geminiで利用可能なモデルIDの一覧を取得する（テキスト対話可能なモデルを抽出） */
 export async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`)
@@ -402,11 +390,10 @@ export async function fetchAvailableGeminiModels(apiKey: string): Promise<string
     const data = await res.json()
     if (!data.models || !Array.isArray(data.models)) return []
 
-    // 1日20回制限の実験プレビューや不要モデルを除外
+    // 特殊用途（音声・画像・動画・埋め込み・ロボティクス等）のみ除外
     const excluded = [
       'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
       'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
-      '3.8', '3.7', '3.5', '3-flash', '2.5',
     ]
 
     return data.models
@@ -454,11 +441,8 @@ export function selectBestGeminiModel(models: string[]): string | undefined {
     if (lower === 'gemini-1.5-pro') return 1700
     if (lower === 'gemini-2.0-flash-lite') return 1600
 
-    let base = 100
-    // 3.x系や実験プレビューは20回/日制限のため低め
-    if (lower.includes('3.') || lower.includes('3-flash')) {
-      base = 300
-    } else if (lower.includes('flash') && !lower.includes('lite') && !lower.includes('8b')) {
+    let base = 500
+    if (lower.includes('flash') && !lower.includes('lite') && !lower.includes('8b')) {
       base = 1000
     } else if (lower.includes('flash') && (lower.includes('lite') || lower.includes('8b'))) {
       base = 800
@@ -479,17 +463,35 @@ const GEMINI_PREFERRED_ORDER = [
   'gemini-2.0-flash-lite',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-3.7-flash',
+  'gemini-3.5-flash',
+]
+
+/** デフォルトで表示するGeminiモデル一覧（API未接続時やフォールバック用） */
+export const FALLBACK_GEMINI_MODELS = [
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（大容量 1,500回/日）' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度）' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（最新プレビュー）' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（最新高精度プレビュー）' },
+  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版）' },
+  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash（実験版）' },
 ]
 
 /** モデルIDを分かりやすい日本語ラベルに変換する */
 export function formatGeminiModelLabel(modelId: string): string {
   const m = modelId.toLowerCase()
   if (m === 'gemini-2.0-flash') return 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）'
+  if (m === 'gemini-2.0-flash-lite') return 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）'
   if (m === 'gemini-1.5-flash') return 'Gemini 1.5 Flash（大容量 1,500回/日）'
-  if (m === 'gemini-1.5-pro') return 'Gemini 1.5 Pro（高精度・大容量）'
-  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash'
-  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro'
-  if (m === 'gemini-2.0-flash-lite') return 'Gemini 2.0 Flash Lite（超軽量）'
+  if (m === 'gemini-1.5-pro') return 'Gemini 1.5 Pro（高精度）'
+  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash（最新プレビュー）'
+  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro（最新高精度プレビュー）'
+  if (m === 'gemini-3.7-flash') return 'Gemini 3.7 Flash（最新実験版）'
+  if (m === 'gemini-3.5-flash') return 'Gemini 3.5 Flash（実験版）'
   if (m.includes('3.8')) return `${modelId}（実験プレビュー・制限 20回/日）`
   if (m.includes('3.7') || m.includes('3.5') || m.includes('3-flash')) return `${modelId}（プレビュー）`
   if (m.includes('3.1-pro')) return `${modelId}（高精度プレビュー）`
