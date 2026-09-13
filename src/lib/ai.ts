@@ -12,9 +12,9 @@ import { sleep } from './utils'
 import { getPrompt } from './prompts'
 import { buildFacilitatorSystemPrompt, FACILITATOR_ID } from './presetRoles'
 
-const MAX_RETRIES = 3
-const MIN_WAIT = 5000
-const MAX_WAIT = 120000
+const MAX_RETRIES = 4
+const MIN_WAIT = 3000
+const MAX_WAIT = 60000
 
 function parseRetrySeconds(errStr: string): number {
   const m = errStr.match(/retry[_ ]?(?:after|in)[: ]*(\d+(?:\.\d+)?)\s*s/i)
@@ -35,10 +35,15 @@ function isRateLimit(err: unknown): boolean {
 
 function isFreeTierDailyExhausted(err: unknown): boolean {
   const s = String(err).toLowerCase()
-  // 明確に「PerDay」「per day」「1日あたりの上限」の場合のみ1日上限と判定
-  const isDaily = s.includes('perday') || s.includes('per_day') || s.includes('per day') || s.includes('requests per day')
-  const isLimit0 = (s.includes('limit: 0') || s.includes('limit:0')) && !s.includes('perminute') && !s.includes('per_minute')
-  return isDaily || isLimit0
+  // 明確に「PerDay」「requests per day」「1日あたりの上限」の場合のみ1日上限と判定
+  return (
+    s.includes('requests per day') ||
+    s.includes('perday') ||
+    s.includes('per_day') ||
+    s.includes('per day') ||
+    s.includes('daily limit') ||
+    s.includes('daily quota')
+  )
 }
 
 /** APIエラーをユーザー向けの日本語メッセージに変換する */
@@ -60,12 +65,12 @@ export function parseUserFriendlyError(err: unknown): string {
 
   // ── クォータ・レート制限 ──
   if (isFreeTierDailyExhausted(err)) {
-    return '無料プランの本日分の上限に達しました。明日リセットされます。すぐ使いたい場合は Google AI Studio で課金を有効にしてください。'
+    return '無料プランの1日分の上限（1,500回/日）に達しました。明日リセットされます。'
   }
   if (isRateLimit(err)) {
     const secs = parseRetrySeconds(s)
-    if (secs > 0) return `リクエストが集中しています（1分15回制限）。${secs}秒後に自動で再試行します。`
-    return 'リクエストが一時的に集中しています。数秒後に自動で再開します（無料枠は1分15回まで）。'
+    if (secs > 0) return `リクエストが一時的に集中しています（1分15回制限）。約${secs}秒後に自動で再開します。`
+    return 'リクエストが一時的に集中しています（1分15回制限）。数秒お待ちください。'
   }
 
   // ── モデル・入力の問題 ──
