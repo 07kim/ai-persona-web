@@ -277,12 +277,14 @@ export default function Deliberation() {
         setCurrentSpeaker(null)
         setLoadingPhase('')
         const s = String(e)
-        // 致命的エラーは中断
-        if (s.includes('free_tier') || s.includes('FreeTier') || s.includes('limit: 0') ||
-            s.includes('API_KEY') || s.includes('401') || s.includes('403')) {
+        // 致命的エラー（APIキー無効や権限なし、1日上限到達）のみセッション停止
+        const isFatal = s.includes('API_KEY') || s.includes('401') || s.includes('403') ||
+          s.includes('PERMISSION_DENIED') || s.toLowerCase().includes('perday') ||
+          s.toLowerCase().includes('per_day')
+        if (isFatal) {
           return false
         }
-        // 非致命的エラーはこの発言をスキップして継続
+        // 一時的制限や通常エラーはこの発言をスキップして継続
         return true
       }
     }

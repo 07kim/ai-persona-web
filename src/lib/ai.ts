@@ -33,9 +33,12 @@ function isRateLimit(err: unknown): boolean {
   )
 }
 
-function isFreeTierExhausted(err: unknown): boolean {
-  const s = String(err)
-  return s.includes('free_tier') || s.includes('FreeTier') || (s.includes('limit: 0') && s.includes('quota'))
+function isFreeTierDailyExhausted(err: unknown): boolean {
+  const s = String(err).toLowerCase()
+  // 明確に「PerDay」「per day」「1日あたりの上限」の場合のみ1日上限と判定
+  const isDaily = s.includes('perday') || s.includes('per_day') || s.includes('per day') || s.includes('requests per day')
+  const isLimit0 = (s.includes('limit: 0') || s.includes('limit:0')) && !s.includes('perminute') && !s.includes('per_minute')
+  return isDaily || isLimit0
 }
 
 /** APIエラーをユーザー向けの日本語メッセージに変換する */
@@ -56,13 +59,13 @@ export function parseUserFriendlyError(err: unknown): string {
   }
 
   // ── クォータ・レート制限 ──
-  if (isFreeTierExhausted(err)) {
+  if (isFreeTierDailyExhausted(err)) {
     return '無料プランの本日分の上限に達しました。明日リセットされます。すぐ使いたい場合は Google AI Studio で課金を有効にしてください。'
   }
   if (isRateLimit(err)) {
     const secs = parseRetrySeconds(s)
-    if (secs > 0) return `リクエストが集中しています。${secs}秒後に自動で再試行します。`
-    return 'リクエストが多すぎます。少し待ってから再試行してください（無料枠は1分15回まで）。'
+    if (secs > 0) return `リクエストが集中しています（1分15回制限）。${secs}秒後に自動で再試行します。`
+    return 'リクエストが一時的に集中しています。数秒後に自動で再開します（無料枠は1分15回まで）。'
   }
 
   // ── モデル・入力の問題 ──
@@ -109,8 +112,8 @@ async function withRetry<T>(
     } catch (err) {
       lastErr = err
       if (!isRateLimit(err)) throw err
-      // 無料枠の日次上限は待っても解決しないので即座にthrow
-      if (isFreeTierExhausted(err)) throw err
+      // 無料枠の日次上限（1日上限）のみ即座にthrow（1分間制限は待機して自動リトライ）
+      if (isFreeTierDailyExhausted(err)) throw err
       const suggested = parseRetrySeconds(String(err)) * 1000
       const wait = Math.min(Math.max(suggested || MIN_WAIT * (i + 1), MIN_WAIT), MAX_WAIT)
       const waitSecs = Math.ceil(wait / 1000)
