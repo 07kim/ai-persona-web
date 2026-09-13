@@ -126,7 +126,19 @@ async function withRetry<T>(
 }
 
 function getModelName(settings: Settings): string {
-  if (settings.model && settings.model !== 'default') return settings.model
+  if (settings.model && settings.model !== 'default') {
+    const m = settings.model.toLowerCase()
+    // 旧20回制限モデル（2.5系・3.x系プレビュー等）が残っている場合のみ、利用可能な大容量モデルへ自動移行
+    const isOldRestricted = m.includes('2.5') || m.includes('3.7') || m.includes('3.5') || m.includes('3-flash') || m.includes('3.8')
+    if (isOldRestricted) {
+      if (settings.availableGeminiModels && settings.availableGeminiModels.length > 0) {
+        const best = selectBestGeminiModel(settings.availableGeminiModels)
+        if (best) return best
+      }
+      return 'gemini-2.0-flash'
+    }
+    return settings.model
+  }
   return 'gemini-2.0-flash'
 }
 
@@ -382,19 +394,27 @@ async function generateTextStream(
   }
 }
 
-/** Geminiで利用可能なモデルIDの一覧を取得する */
+/** Geminiで利用可能なモデルIDの一覧を取得する（20回制限の実験モデルや不要モデルは除外） */
 export async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`)
     if (!res.ok) return []
     const data = await res.json()
     if (!data.models || !Array.isArray(data.models)) return []
+
+    // 1日20回制限の実験プレビューや不要モデルを除外
+    const excluded = [
+      'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
+      'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
+      '3.8', '3.7', '3.5', '3-flash', '2.5',
+    ]
+
     return data.models
       .filter((m: { supportedGenerationMethods?: string[] }) =>
         Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent')
       )
       .map((m: { name?: string }) => (m.name || '').replace(/^models\//, ''))
-      .filter(Boolean)
+      .filter((m: string) => m && !excluded.some(kw => m.toLowerCase().includes(kw)))
   } catch {
     return []
   }
@@ -456,13 +476,9 @@ export function selectBestGeminiModel(models: string[]): string | undefined {
 /** 優先度順のGemini推奨モデル候補（フォールバック用） */
 const GEMINI_PREFERRED_ORDER = [
   'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
-  'gemini-2.0-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
 ]
 
 /** モデルIDを分かりやすい日本語ラベルに変換する */

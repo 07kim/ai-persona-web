@@ -5,14 +5,10 @@ import { getProvider } from '../types'
 import { Eye, EyeOff, CheckCircle, AlertCircle, Loader, Download, Upload, Database } from 'lucide-react'
 
 const FALLBACK_GEMINI_MODELS = [
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量枠・推奨）' },
-  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（軽量・高速）' },
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（安定・1,500回/日）' },
-  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高性能）' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（実験版・20回/日）' },
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（実験版・20回/日）' },
-  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版・20回/日）' },
-  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash（実験版・20回/日）' },
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（大容量 1,500回/日・高安定）' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度・50回/日）' },
 ]
 
 const STATIC_MODEL_GROUPS = [
