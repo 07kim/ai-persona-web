@@ -7,7 +7,7 @@ import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Persona, Question, SurveyAnswer, Settings, DeliberationParticipant, ArtifactData, DeliberationSummary, MaterialItem, DesignSpec, DesignScreen } from '../types'
 import { getProvider, getApiKeyForModel } from '../types'
-import { useAppStore } from '../store/useAppStore'
+import { getSettings, saveSettings } from './db'
 import { sleep } from './utils'
 import { getPrompt } from './prompts'
 import { buildFacilitatorSystemPrompt, FACILITATOR_ID } from './presetRoles'
@@ -166,11 +166,11 @@ async function autoHealGeminiModel(apiKey: string, failedModel: string): Promise
 
   const fallback = workingModel || 'gemini-1.5-flash'
 
-  // アプリストアの設定も自動修復して永続化
+  // 設定も自動修復して永続化
   try {
-    const currentSettings = useAppStore.getState().settings
-    if (currentSettings.model === failedModel || !currentSettings.model) {
-      useAppStore.getState().saveSettings({ ...currentSettings, model: fallback })
+    const current = await getSettings()
+    if (current && (current.model === failedModel || !current.model)) {
+      await saveSettings({ ...current, model: fallback })
     }
   } catch {}
 

@@ -108,20 +108,26 @@ export default function Deliberation() {
 
   const participants: DeliberationParticipant[] = [
     ...(facilitatorParticipant ? [facilitatorParticipant] : []),
-    ...selectedPresetIds.map(id => {
-      const role = PRESET_ROLES.find(r => r.id === id)!
-      return { id, name: role.name, role: role.description, type: 'preset' as const }
-    }),
-    ...selectedPersonaIds.map(pid => {
-      const p = personas.find(pe => pe.id === pid)!
-      return {
-        id: `persona_${pid}`,
-        name: p.name,
-        role: `${p.occupation}、${p.age}歳。${p.background.slice(0, 50)}`,
-        type: 'persona' as const,
-        personaId: pid,
-      }
-    }),
+    ...selectedPresetIds
+      .map(id => {
+        const role = PRESET_ROLES.find(r => r.id === id)
+        if (!role) return null
+        return { id, name: role.name, role: role.description, type: 'preset' as const }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null),
+    ...selectedPersonaIds
+      .map(pid => {
+        const p = personas.find(pe => pe.id === pid)
+        if (!p) return null
+        return {
+          id: `persona_${pid}`,
+          name: p.name,
+          role: `${p.occupation}、${p.age}歳。${p.background.slice(0, 50)}`,
+          type: 'persona' as const,
+          personaId: pid,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null),
     ...customList.map(c => ({ id: c.id, name: c.name, role: c.role, type: 'custom' as const })),
   ]
 
