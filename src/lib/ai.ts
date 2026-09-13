@@ -129,7 +129,14 @@ async function withRetry<T>(
 }
 
 function getModelName(settings: Settings): string {
-  if (settings.model && settings.model !== 'default') return settings.model
+  if (settings.model && settings.model !== 'default') {
+    const m = settings.model.toLowerCase()
+    // Google APIに存在せず404を返す未公開ID（2.5系等）は安全に公式推奨モデルへフォールバック
+    if (m.includes('2.5') || m.includes('3.8')) {
+      return 'gemini-2.0-flash'
+    }
+    return settings.model
+  }
   return 'gemini-2.0-flash'
 }
 
@@ -150,29 +157,20 @@ function isModelNotFoundError(err: unknown): boolean {
 /** 実行時にモデルが見つからなかった場合に利用可能な有効モデルを自動特定し、設定を自己修復する */
 async function autoHealGeminiModel(apiKey: string, failedModel: string): Promise<string> {
   let workingModel: string | undefined
+  const client = new GoogleGenerativeAI(apiKey)
 
-  try {
-    const available = await fetchAvailableGeminiModels(apiKey)
-    const valid = available.filter(m => m !== failedModel)
-    if (valid.length > 0) {
-      workingModel = selectBestGeminiModel(valid)
-    }
-  } catch {}
-
-  if (!workingModel) {
-    const client = new GoogleGenerativeAI(apiKey)
-    for (const cand of GEMINI_PREFERRED_ORDER) {
-      if (cand === failedModel) continue
-      try {
-        const m = client.getGenerativeModel({ model: cand })
-        await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+  // 確実に存在する公式モデル候補を順にテスト
+  for (const cand of GEMINI_PREFERRED_ORDER) {
+    if (cand === failedModel) continue
+    try {
+      const m = client.getGenerativeModel({ model: cand })
+      await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+      workingModel = cand
+      break
+    } catch (e) {
+      if (!isModelNotFoundError(e)) {
         workingModel = cand
         break
-      } catch (e) {
-        if (!isModelNotFoundError(e)) {
-          workingModel = cand
-          break
-        }
       }
     }
   }
@@ -182,7 +180,7 @@ async function autoHealGeminiModel(apiKey: string, failedModel: string): Promise
   // 設定も自動修復して永続化
   try {
     const current = await getSettings()
-    if (current && (current.model === failedModel || !current.model)) {
+    if (current) {
       await saveSettings({ ...current, model: fallback })
     }
   } catch {}
@@ -501,23 +499,17 @@ export function selectBestGeminiModel(models: string[]): string | undefined {
 
 /** 優先度順のGemini推奨モデル候補（フォールバック用） */
 const GEMINI_PREFERRED_ORDER = [
-  'gemini-2.5-flash',
   'gemini-2.0-flash',
-  'gemini-2.5-pro',
-  'gemini-3.7-flash',
   'gemini-2.0-flash-lite',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
 ]
 
-/** デフォルトで表示するGemini主要モデル一覧（API未接続時やフォールバック用） */
+/** デフォルトで表示するGemini主要モデル一覧（確実に動作する公式実用モデル） */
 export const FALLBACK_GEMINI_MODELS = [
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（最新プレビュー）' },
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（推奨）' },
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（最新高精度プレビュー）' },
-  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版）' },
-  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（超軽量）' },
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（安定版）' },
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（大容量 1,500回/日）' },
   { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度）' },
 ]
 
