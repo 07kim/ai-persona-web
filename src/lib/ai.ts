@@ -7,7 +7,7 @@ import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Persona, Question, SurveyAnswer, Settings, DeliberationParticipant, ArtifactData, DeliberationSummary, MaterialItem, DesignSpec, DesignScreen } from '../types'
 import { getProvider, getApiKeyForModel } from '../types'
-import { getSettings, saveSettings } from './db'
+import { saveSettings } from './db'
 import { sleep } from './utils'
 import { getPrompt } from './prompts'
 import { buildFacilitatorSystemPrompt, FACILITATOR_ID } from './presetRoles'
@@ -154,40 +154,6 @@ function isModelNotFoundError(err: unknown): boolean {
   )
 }
 
-/** 実行時にモデルが見つからなかった場合に利用可能な有効モデルを自動特定し、設定を自己修復する */
-async function autoHealGeminiModel(apiKey: string, failedModel: string): Promise<string> {
-  let workingModel: string | undefined
-  const client = new GoogleGenerativeAI(apiKey)
-
-  // 確実に存在する公式モデル候補を順にテスト
-  for (const cand of GEMINI_PREFERRED_ORDER) {
-    if (cand === failedModel) continue
-    try {
-      const m = client.getGenerativeModel({ model: cand })
-      await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
-      workingModel = cand
-      break
-    } catch (e) {
-      if (!isModelNotFoundError(e)) {
-        workingModel = cand
-        break
-      }
-    }
-  }
-
-  const fallback = workingModel || 'gemini-2.0-flash'
-
-  // 設定も自動修復して永続化
-  try {
-    const current = await getSettings()
-    if (current) {
-      await saveSettings({ ...current, model: fallback })
-    }
-  } catch {}
-
-  return fallback
-}
-
 /** テキストを1回生成して返す（プロバイダー自動切替・404自動自己修復） */
 async function generateText(
   prompt: string,
@@ -228,28 +194,40 @@ async function generateText(
     return block.type === 'text' ? block.text : ''
   }
 
-  // Gemini（404エラー時は自動でモデルを切り替えてリトライ）
+  // Gemini: 404発生時に動作するモデルへ即座に自動切り替えて実行完結
   const client = new GoogleGenerativeAI(apiKey)
-  let activeModel = model
-  const runGemini = async (targetModel: string) => {
-    const genModel = client.getGenerativeModel({
-      model: targetModel,
-      systemInstruction: systemPrompt,
-      ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
-    })
-    const result: GenerateContentResult = await withRetry(() => genModel.generateContent(prompt))
-    return result.response.text()
-  }
+  const candidateModels = Array.from(new Set([
+    model,
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-pro',
+    'gemini-2.0-flash-lite',
+    ...GEMINI_PREFERRED_ORDER,
+  ]))
 
-  try {
-    return await runGemini(activeModel)
-  } catch (err) {
-    if (isModelNotFoundError(err)) {
-      activeModel = await autoHealGeminiModel(apiKey, activeModel)
-      return await runGemini(activeModel)
+  let lastErr: unknown
+  for (const targetModel of candidateModels) {
+    try {
+      const genModel = client.getGenerativeModel({
+        model: targetModel,
+        systemInstruction: systemPrompt,
+        ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
+      })
+      const result: GenerateContentResult = await withRetry(() => genModel.generateContent(prompt))
+      const text = result.response.text()
+
+      // 動作したモデルで自動修復保存
+      if (targetModel !== model) {
+        saveSettings({ ...settings, model: targetModel }).catch(() => {})
+      }
+      return text
+    } catch (err) {
+      lastErr = err
+      if (!isModelNotFoundError(err)) throw err
+      console.warn(`[Gemini generateText] Model ${targetModel} 404, auto-switching...`)
     }
-    throw err
   }
+  throw lastErr
 }
 
 /** 添付資料から画像パーツを抽出する（base64 data URL → { mimeType, data } ） */
@@ -344,9 +322,8 @@ async function generateTextStream(
     return full
   }
 
-  // Gemini（404エラー・未対応エンドポイント時は自動でフォールバックして継続）
+  // Gemini（404・非対応時は動作するモデルへ全自動切り替え）
   const client = new GoogleGenerativeAI(apiKey)
-  let activeModel = model
   const lastUser = messages.filter(m => m.role === 'user').at(-1)?.content ?? ''
   const history = messages.slice(0, -1).map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
@@ -357,7 +334,16 @@ async function generateTextStream(
     ...images.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
   ]
 
-  const executeGeminiStream = async (targetModel: string): Promise<string> => {
+  const candidateModels = Array.from(new Set([
+    model,
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-pro',
+    'gemini-2.0-flash-lite',
+    ...GEMINI_PREFERRED_ORDER,
+  ]))
+
+  const runModelStream = async (targetModel: string): Promise<string> => {
     let textAcc = ''
     const genModel = client.getGenerativeModel({ model: targetModel, systemInstruction: systemPrompt })
 
@@ -372,16 +358,14 @@ async function generateTextStream(
       }
       if (textAcc) return textAcc
     } catch (chatErr) {
+      if (isModelNotFoundError(chatErr)) throw chatErr
       console.warn(`[Gemini] Chat stream failed for ${targetModel}, trying direct content stream...`, chatErr)
     }
 
-    // 2. チャットストリームが非対応/404の場合、generateContentStream で直接ストリーミング試行
+    // 2. チャットストリームが非対応の場合、generateContentStream で直接ストリーミング試行
     try {
       textAcc = ''
-      const contents = [
-        ...history,
-        { role: 'user', parts: geminiParts },
-      ]
+      const contents = [...history, { role: 'user', parts: geminiParts }]
       const streamRes = await withRetry(() => genModel.generateContentStream({ contents }), onWait)
       for await (const chunk of streamRes.stream) {
         const t = chunk.text()
@@ -390,18 +374,15 @@ async function generateTextStream(
       }
       if (textAcc) return textAcc
     } catch (streamErr) {
-      console.warn(`[Gemini] generateContentStream failed for ${targetModel}, falling back to robust single generateContent...`, streamErr)
+      if (isModelNotFoundError(streamErr)) throw streamErr
+      console.warn(`[Gemini] generateContentStream failed for ${targetModel}, fallback to generateContent...`, streamErr)
     }
 
-    // 3. ストリーミングエンドポイントが非対応/404の場合、確実に動く通常の generateContent で生成
-    const contents = [
-      ...history,
-      { role: 'user', parts: geminiParts },
-    ]
+    // 3. ストリーミング非対応の場合、確実に動く通常の generateContent で生成
+    const contents = [...history, { role: 'user', parts: geminiParts }]
     const directRes = await withRetry(() => genModel.generateContent({ contents }), onWait)
     const finalTxt = directRes.response.text()
     if (finalTxt) {
-      // 擬似ストリーミング（小刻みに送出してUIをスムーズにする）
       const chunkSize = 6
       for (let i = 0; i < finalTxt.length; i += chunkSize) {
         onChunk(finalTxt.slice(i, i + chunkSize))
@@ -411,16 +392,22 @@ async function generateTextStream(
     return finalTxt
   }
 
-  try {
-    return await executeGeminiStream(activeModel)
-  } catch (err) {
-    if (isModelNotFoundError(err)) {
-      console.warn(`[Gemini] Model ${activeModel} not found. Auto-healing to available model...`)
-      activeModel = await autoHealGeminiModel(apiKey, activeModel)
-      return await executeGeminiStream(activeModel)
+  let lastStreamErr: unknown
+  for (const targetModel of candidateModels) {
+    try {
+      const resultText = await runModelStream(targetModel)
+      if (targetModel !== model) {
+        saveSettings({ ...settings, model: targetModel }).catch(() => {})
+      }
+      return resultText
+    } catch (err) {
+      lastStreamErr = err
+      if (!isModelNotFoundError(err)) throw err
+      console.warn(`[Gemini generateTextStream] Model ${targetModel} 404, auto-switching to next candidate...`)
     }
-    throw err
   }
+
+  throw lastStreamErr
 }
 
 /** Geminiの全取得モデルから、テキスト対話可能な実用モデルを抽出・ソートする */
