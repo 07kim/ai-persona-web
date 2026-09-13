@@ -131,13 +131,40 @@ async function withRetry<T>(
 function getModelName(settings: Settings): string {
   if (settings.model && settings.model !== 'default') {
     const m = settings.model.toLowerCase()
-    // Google APIに存在せず404を返す未公開ID（2.5系等）は安全に公式推奨モデルへフォールバック
-    if (m.includes('2.5') || m.includes('3.8')) {
-      return 'gemini-2.0-flash'
+    // Google APIに存在せず404を返す未公開ID（2.5系等）は安全に確実な安定モデルへフォールバック
+    if (m.includes('2.5') || m.includes('3.8') || m.includes('3.7') || m.includes('3.5')) {
+      return 'gemini-1.5-flash'
     }
     return settings.model
   }
-  return 'gemini-2.0-flash'
+  return 'gemini-1.5-flash'
+}
+
+/** APIキーを用いて実際に動作するモデルをテストし、確実にエラーの出ないモデルを自動特定・選択する */
+export async function findFirstWorkingGeminiModel(apiKey: string): Promise<string> {
+  if (!apiKey.trim()) return 'gemini-1.5-flash'
+  const client = new GoogleGenerativeAI(apiKey.trim())
+
+  const testOrder = [
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-pro',
+    'gemini-2.0-flash-lite',
+  ]
+
+  for (const cand of testOrder) {
+    try {
+      const m = client.getGenerativeModel({ model: cand })
+      await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+      return cand
+    } catch (e) {
+      if (!isModelNotFoundError(e)) {
+        return cand
+      }
+    }
+  }
+
+  return 'gemini-1.5-flash'
 }
 
 type Message = { role: 'user' | 'assistant'; content: string }

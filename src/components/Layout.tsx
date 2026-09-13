@@ -10,7 +10,7 @@ import {
 import { useAppStore } from '../store/useAppStore'
 import CommandPalette from './CommandPalette'
 import FeedbackModal from './FeedbackModal'
-import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels, filterUsefulGeminiModels, FALLBACK_GEMINI_MODELS } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels, filterUsefulGeminiModels, findFirstWorkingGeminiModel, FALLBACK_GEMINI_MODELS } from '../lib/ai'
 import { getProvider, getApiKeyForModel, detectProviderFromKey, DEFAULT_MODEL_FOR_PROVIDER } from '../types'
 
 const STATIC_MODEL_GROUPS = [
@@ -192,6 +192,22 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
       setSelectedModel(settings.model)
     }
   }, [settings.model])
+
+  // 起動時: Geminiキーが存在する場合、確実にエラーの出ない動作モデルを自動テスト＆自動選択
+  useEffect(() => {
+    if (!settings.apiKey) return
+    const isBrokenModel = !settings.model || settings.model.includes('2.5') || settings.model.includes('3.8') || settings.model.includes('3.7')
+    if (isBrokenModel) {
+      findFirstWorkingGeminiModel(settings.apiKey).then(working => {
+        if (working && working !== settings.model) {
+          saveSettings({ ...settings, model: working })
+          setSelectedModel(working)
+          setModelStatusMsg(`✓ 動作確認済みモデル（${working}）を自動選択しました`)
+          setTimeout(() => setModelStatusMsg(''), 4000)
+        }
+      }).catch(() => {})
+    }
+  }, [settings.apiKey])
 
   const provider = getProvider(selectedModel)
   const currentKey = getApiKeyForModel(settings, selectedModel)
