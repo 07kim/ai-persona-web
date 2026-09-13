@@ -343,7 +343,7 @@ async function generateTextStream(
     return full
   }
 
-  // Gemini（404エラー時は自動でモデルを切り替えてリトライ）
+  // Gemini（404エラー・未対応エンドポイント時は自動でフォールバックして継続）
   const client = new GoogleGenerativeAI(apiKey)
   let activeModel = model
   const lastUser = messages.filter(m => m.role === 'user').at(-1)?.content ?? ''
@@ -359,24 +359,67 @@ async function generateTextStream(
   const executeGeminiStream = async (targetModel: string): Promise<string> => {
     let textAcc = ''
     const genModel = client.getGenerativeModel({ model: targetModel, systemInstruction: systemPrompt })
-    const chat = genModel.startChat({ history })
-    const responseStream = await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
 
-    for await (const chunk of responseStream.stream) {
-      const t = chunk.text()
-      textAcc += t
-      if (t) onChunk(t)
+    // 1. まず標準のチャットストリーミングを試す
+    try {
+      const chat = genModel.startChat({ history })
+      const responseStream = await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
+      for await (const chunk of responseStream.stream) {
+        const t = chunk.text()
+        textAcc += t
+        if (t) onChunk(t)
+      }
+      if (textAcc) return textAcc
+    } catch (chatErr) {
+      if (isModelNotFoundError(chatErr)) throw chatErr
+      console.warn(`[Gemini] Chat stream failed for ${targetModel}, falling back to generateContentStream...`, chatErr)
     }
-    return textAcc
+
+    // 2. チャット形式が非対応のモデルの場合、generateContentStream で直接送信
+    try {
+      textAcc = ''
+      const contents = [
+        ...history,
+        { role: 'user', parts: geminiParts },
+      ]
+      const streamRes = await withRetry(() => genModel.generateContentStream({ contents }), onWait)
+      for await (const chunk of streamRes.stream) {
+        const t = chunk.text()
+        textAcc += t
+        if (t) onChunk(t)
+      }
+      if (textAcc) return textAcc
+    } catch (streamErr) {
+      if (isModelNotFoundError(streamErr)) throw streamErr
+      console.warn(`[Gemini] generateContentStream failed for ${targetModel}, falling back to single generateContent...`, streamErr)
+    }
+
+    // 3. ストリーミング非対応モデルの場合、単発生成で取得して一度に送出
+    const contents = [
+      ...history,
+      { role: 'user', parts: geminiParts },
+    ]
+    const directRes = await withRetry(() => genModel.generateContent({ contents }), onWait)
+    const finalTxt = directRes.response.text()
+    if (finalTxt) onChunk(finalTxt)
+    return finalTxt
   }
 
   try {
     return await executeGeminiStream(activeModel)
   } catch (err) {
     if (isModelNotFoundError(err)) {
-      console.warn(`[Gemini] Model ${activeModel} not found or unsupported. Auto-healing...`)
+      console.warn(`[Gemini] Model ${activeModel} not found or unsupported. Auto-healing to working model...`)
       activeModel = await autoHealGeminiModel(apiKey, activeModel)
-      return await executeGeminiStream(activeModel)
+      try {
+        return await executeGeminiStream(activeModel)
+      } catch (retryErr) {
+        // フォールバック先でも失敗した場合は gemini-2.0-flash で最終試行
+        if (activeModel !== 'gemini-2.0-flash') {
+          return await executeGeminiStream('gemini-2.0-flash')
+        }
+        throw retryErr
+      }
     }
     throw err
   }
