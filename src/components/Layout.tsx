@@ -17,7 +17,11 @@ const MODEL_GROUPS = [
     label: 'Google Gemini',
     provider: 'gemini' as const,
     models: [
-      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（推奨）' },
+      { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新・高速）' },
+      { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+      { value: 'gemini-3-flash', label: 'Gemini 3 Flash' },
+      { value: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
+      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
       { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },

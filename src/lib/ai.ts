@@ -314,11 +314,59 @@ export async function fetchAvailableGeminiModels(apiKey: string): Promise<string
   }
 }
 
-/** 優先度順のGemini推奨モデル候補 */
+/** 画像・音声・翻訳・特殊用途モデルを除外し、テキスト対話に最適なモデルを動的スコアリングで選定する */
+export function selectBestGeminiModel(models: string[]): string | undefined {
+  if (!models || models.length === 0) return undefined
+
+  // 特殊用途モデルを除外
+  const excludedKeywords = [
+    'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
+    'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
+  ]
+
+  const textModels = models.filter(m => {
+    const lower = m.toLowerCase()
+    return !excludedKeywords.some(kw => lower.includes(kw))
+  })
+
+  if (textModels.length === 0) return models[0]
+
+  // バージョン番号を抽出する（例: "gemini-3.7-flash" -> 3.7, "gemini-2.5-pro" -> 2.5, "gemini-1.5-flash-8b" -> 1.5）
+  function parseVersion(name: string): number {
+    const match = name.match(/(\d+(?:\.\d+)?)/)
+    return match ? parseFloat(match[1]) : 0
+  }
+
+  // スコアリング（Flash系 > Flash Lite系 > Pro系 > その他、かつバージョン降順）
+  function getScore(name: string): number {
+    const lower = name.toLowerCase()
+    const ver = parseVersion(lower)
+    let base = 100
+
+    if (lower.includes('flash') && !lower.includes('lite') && !lower.includes('8b')) {
+      base = 1000 // 標準Flash（最優先・高速・高品質）
+    } else if (lower.includes('flash') && (lower.includes('lite') || lower.includes('8b'))) {
+      base = 800  // Flash Lite
+    } else if (lower.includes('pro')) {
+      base = 600  // Pro系
+    }
+
+    return base + ver * 100
+  }
+
+  const sorted = [...textModels].sort((a, b) => getScore(b) - getScore(a))
+  return sorted[0]
+}
+
+/** 優先度順のGemini推奨モデル候補（フォールバック用） */
 const GEMINI_PREFERRED_ORDER = [
+  'gemini-3.7-flash',
+  'gemini-3.5-flash',
+  'gemini-3-flash',
   'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-1.5-flash',
+  'gemini-3.1-pro',
   'gemini-2.5-pro',
   'gemini-2.0-flash-lite',
   'gemini-1.5-pro',
@@ -353,8 +401,8 @@ export async function validateApiKey(
       let bestModel: string | undefined
 
       if (availableModels.length > 0) {
-        // 優先度順に使えるモデルを探す
-        bestModel = GEMINI_PREFERRED_ORDER.find(m => availableModels.includes(m)) || availableModels[0]
+        // 動的スマートスコアリングで最新・最適なモデルを選定
+        bestModel = selectBestGeminiModel(availableModels)
       } else {
         // fetchが取得できなかった場合のフォールバック候補検証
         const client = new GoogleGenerativeAI(apiKey)
