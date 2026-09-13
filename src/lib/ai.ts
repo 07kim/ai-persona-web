@@ -385,7 +385,6 @@ async function generateTextStream(
       }
       if (textAcc) return textAcc
     } catch (chatErr) {
-      if (isModelNotFoundError(chatErr)) throw chatErr
       console.warn(`[Gemini] Chat stream failed for ${targetModel}, trying direct content stream...`, chatErr)
     }
 
@@ -401,11 +400,10 @@ async function generateTextStream(
       }
       if (textAcc) return textAcc
     } catch (streamErr) {
-      if (isModelNotFoundError(streamErr)) throw streamErr
       console.warn(`[Gemini] generateContentStream failed for ${targetModel}, fallback to generateContent...`, streamErr)
     }
 
-    // 3. ストリーミング非対応の場合、確実に動く通常の generateContent で生成
+    // 3. ストリーミング非対応/404の場合、確実に動作する通常の generateContent で生成
     const contents = [...history, { role: 'user', parts: geminiParts }]
     const directRes = await withRetry(() => genModel.generateContent({ contents }), onWait)
     const finalTxt = directRes.response.text()
