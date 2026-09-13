@@ -382,18 +382,17 @@ async function generateTextStream(
   }
 }
 
-/** Geminiの全取得モデルから、実用的・主要な対話モデル（2.0系、1.5系、2.5系、3.7/3.5系）のみを厳選・ソートする */
+/** Geminiの全取得モデルから、テキスト対話可能な実用モデルを抽出・ソートする */
 export function filterUsefulGeminiModels(models: string[]): string[] {
   if (!models || models.length === 0) return []
 
-  // 明示的に除外するキーワード（特殊用途・内部・Gemma・雑多な中間版）
+  // 特殊用途・非対話モデルのみ除外
   const excludedKeywords = [
     'tts', 'audio', 'image', 'video', 'banana', 'transcribe',
     'live', 'embedding', 'robotics', 'dialog', 'clip', 'veo', 'lyria',
     'gemma', 'deep-research', 'deep_research', 'deepresearch',
     'computer-use', 'computer_use', 'computeruse',
-    'customtools', 'custom-tools', 'omni', 'antigravity',
-    'latest', '3.8', '3.6', '3.1', '3-flash-preview', '3.5-flash-lite',
+    'customtools', 'custom-tools', 'antigravity',
   ]
 
   const filtered = models
@@ -406,26 +405,30 @@ export function filterUsefulGeminiModels(models: string[]): string[] {
 
   // 重複除去
   const unique = Array.from(new Set(filtered))
+  if (unique.length === 0) return models.map(m => m.replace(/^models\//, ''))
 
-  // 優先順位スコア（2.0 Flash推奨 > 2.0 Flash Lite > 1.5 Flash > 1.5 Pro > 2.5系 > 3.7 Flash > 3.5 Flash）
+  // バージョン・タイプによる並び替え（2.5 Flash > 2.0 Flash > 3.7 Flash > 1.5 Flash > Pro > その他）
   const getOrderScore = (name: string): number => {
     const lower = name.toLowerCase()
-    if (lower === 'gemini-2.0-flash' || lower === 'gemini-2.0-flash-exp') return 100
-    if (lower === 'gemini-2.0-flash-lite') return 95
-    if (lower === 'gemini-1.5-flash') return 90
-    if (lower === 'gemini-1.5-pro') return 85
-    if (lower === 'gemini-2.5-flash') return 80
-    if (lower === 'gemini-2.5-pro') return 75
-    if (lower === 'gemini-2.5-flash-lite') return 70
-    if (lower === 'gemini-3.7-flash') return 65
-    if (lower === 'gemini-3.5-flash') return 60
+    if (lower === 'gemini-2.5-flash') return 100
+    if (lower === 'gemini-2.0-flash' || lower === 'gemini-2.0-flash-exp') return 95
+    if (lower === 'gemini-2.5-pro') return 90
+    if (lower === 'gemini-3.7-flash') return 88
+    if (lower === 'gemini-2.5-flash-lite') return 85
+    if (lower === 'gemini-2.0-flash-lite') return 80
+    if (lower === 'gemini-1.5-flash') return 75
+    if (lower === 'gemini-1.5-pro') return 70
+    if (lower === 'gemini-3.5-flash') return 68
+    if (lower.includes('flash-latest')) return 65
+    if (lower.includes('flash')) return 60
+    if (lower.includes('pro')) return 50
     return 10
   }
 
   return unique.sort((a, b) => getOrderScore(b) - getOrderScore(a))
 }
 
-/** Geminiで利用可能なモデルIDの一覧を取得する（主要なテキスト対話モデルのみを厳選） */
+/** Geminiで利用可能なモデルIDの一覧を取得する（APIから実際に提供されているモデルを抽出） */
 export async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`)
@@ -440,7 +443,7 @@ export async function fetchAvailableGeminiModels(apiKey: string): Promise<string
       .map((m: { name?: string }) => (m.name || '').replace(/^models\//, ''))
 
     const refined = filterUsefulGeminiModels(candidateNames)
-    return refined.length > 0 ? refined : FALLBACK_GEMINI_MODELS.map(m => m.value)
+    return refined.length > 0 ? refined : candidateNames
   } catch {
     return []
   }
@@ -455,31 +458,40 @@ export function selectBestGeminiModel(models: string[]): string | undefined {
 
 /** 優先度順のGemini推奨モデル候補（フォールバック用） */
 const GEMINI_PREFERRED_ORDER = [
+  'gemini-2.5-flash',
   'gemini-2.0-flash',
+  'gemini-2.5-pro',
+  'gemini-3.7-flash',
   'gemini-2.0-flash-lite',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
 ]
 
-/** デフォルトで表示するGemini主要モデル一覧（確実に動作する安定モデル） */
+/** デフォルトで表示するGemini主要モデル一覧（API未接続時やフォールバック用） */
 export const FALLBACK_GEMINI_MODELS = [
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）' },
-  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）' },
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（大容量 1,500回/日）' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（最新プレビュー）' },
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash（推奨）' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro（最新高精度プレビュー）' },
+  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash（最新実験版）' },
+  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite（超軽量）' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash（安定版）' },
   { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro（高精度）' },
 ]
 
 /** モデルIDを分かりやすい日本語ラベルに変換する */
 export function formatGeminiModelLabel(modelId: string): string {
   const m = modelId.toLowerCase()
+  if (m === 'gemini-2.5-flash') return 'Gemini 2.5 Flash（最新プレビュー）'
+  if (m === 'gemini-2.5-pro') return 'Gemini 2.5 Pro（最新高精度プレビュー）'
+  if (m === 'gemini-2.5-flash-lite') return 'Gemini 2.5 Flash Lite（最新軽量プレビュー）'
   if (m === 'gemini-2.0-flash' || m === 'gemini-2.0-flash-exp') return 'Gemini 2.0 Flash（大容量 1,500回/日・推奨）'
   if (m === 'gemini-2.0-flash-lite') return 'Gemini 2.0 Flash Lite（大容量 1,500回/日・超軽量）'
   if (m === 'gemini-1.5-flash') return 'Gemini 1.5 Flash（大容量 1,500回/日）'
   if (m === 'gemini-1.5-pro') return 'Gemini 1.5 Pro（高精度）'
-  if (m.includes('2.5-flash')) return `${modelId}（最新プレビュー）`
-  if (m.includes('2.5-pro')) return `${modelId}（最新高精度プレビュー）`
-  if (m.includes('3.7')) return `${modelId}（最新実験版）`
-  if (m.includes('3.5')) return `${modelId}（実験版）`
+  if (m === 'gemini-3.7-flash') return 'Gemini 3.7 Flash（最新実験版）'
+  if (m === 'gemini-3.5-flash') return 'Gemini 3.5 Flash（実験版）'
+  if (m.includes('flash-latest')) return `${modelId}（最新Flashエイリアス）`
+  if (m.includes('pro-latest')) return `${modelId}（最新Proエイリアス）`
 
   return modelId
     .split('-')
@@ -511,42 +523,38 @@ export async function validateApiKey(
       })
       return { ok: true, message: '有効なAPIキーです', detectedModel: 'claude-haiku-4-5-20251001' }
     } else {
-      // Geminiの場合: まず利用可能モデル一覧を取得
+      // Geminiの場合: まず利用可能モデル一覧をAPIから動的取得
       const availableModels = await fetchAvailableGeminiModels(apiKey)
       let bestModel: string | undefined
 
-      if (availableModels.length > 0) {
-        // 安定版かつ大容量枠（2.0 Flash / 1.5 Flash）を優先しつつ最新を選択
-        bestModel = selectBestGeminiModel(availableModels)
-      } else {
-        // fetchが取得できなかった場合のフォールバック候補検証
-        const client = new GoogleGenerativeAI(apiKey)
-        for (const cand of GEMINI_PREFERRED_ORDER) {
-          try {
-            const m = client.getGenerativeModel({ model: cand })
-            await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
-            bestModel = cand
-            break
-          } catch (e) {
-            const s = String(e)
-            if (s.includes('API_KEY_INVALID') || s.includes('401') || s.includes('403')) throw e
-            // 404の場合は次の候補を試す
-          }
+      const client = new GoogleGenerativeAI(apiKey)
+
+      // 取得できた実在モデルがあれば、その中から順に動作検証する
+      const testCandidates = availableModels.length > 0
+        ? availableModels
+        : GEMINI_PREFERRED_ORDER
+
+      for (const cand of testCandidates) {
+        try {
+          const m = client.getGenerativeModel({ model: cand })
+          await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+          bestModel = cand
+          break
+        } catch (e) {
+          const s = String(e)
+          if (s.includes('API_KEY_INVALID') || s.includes('401') || s.includes('403')) throw e
+          // 404等の場合は次の実在モデルを試す
         }
       }
 
-      if (!bestModel) {
-        // 最後のフォールバックテスト
-        const client = new GoogleGenerativeAI(apiKey)
-        const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' })
-        await model.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
-        bestModel = 'gemini-1.5-flash'
+      if (!bestModel && availableModels.length > 0) {
+        bestModel = availableModels[0]
       }
 
       return {
         ok: true,
         message: '有効なAPIキーです',
-        detectedModel: bestModel,
+        detectedModel: bestModel || 'gemini-2.0-flash',
         availableModels: availableModels.length > 0 ? availableModels : undefined,
       }
     }
