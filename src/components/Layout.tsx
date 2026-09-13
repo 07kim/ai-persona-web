@@ -97,8 +97,13 @@ const BREADCRUMB_LABELS: Record<string, string> = {
 }
 
 export default function Layout() {
+  const { settings } = useAppStore()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [cmdOpen, setCmdOpen] = useState(false)
+
+  const activeModel = settings.model || 'gemini-2.0-flash'
+  const hasActiveKey = !!getApiKeyForModel(settings, activeModel)
+  const modelShortName = formatGeminiModelLabel(activeModel).split('（')[0]
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -130,6 +135,18 @@ export default function Layout() {
           )}
           <Breadcrumb />
           <div className="flex-1" />
+
+          {/* 現在動作中モデルのステータスバッジ */}
+          <Link
+            to="/settings"
+            className="flex items-center gap-1.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg px-2.5 py-1 transition-colors"
+            title="クリックして設定画面でモデルやAPIキーを変更"
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${hasActiveKey ? 'bg-emerald-500 ring-2 ring-emerald-100' : 'bg-rose-400 ring-2 ring-rose-100'}`} />
+            <span className="text-gray-400 text-[11px]">使用中:</span>
+            <span className="font-medium text-gray-800">{modelShortName}</span>
+          </Link>
+
           <button
             onClick={() => setCmdOpen(true)}
             className="hidden sm:flex items-center gap-2 text-xs text-gray-400 bg-gray-100 hover:bg-gray-200 rounded-lg px-3 py-1.5 transition-colors"
@@ -177,7 +194,14 @@ function Breadcrumb() {
 function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () => void }) {
   const { settings, saveSettings } = useAppStore()
   const [selectedModel, setSelectedModel] = useState(settings.model)
+  const [modelStatusMsg, setModelStatusMsg] = useState('')
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+
+  useEffect(() => {
+    if (settings.model && settings.model !== selectedModel) {
+      setSelectedModel(settings.model)
+    }
+  }, [settings.model])
 
   const provider = getProvider(selectedModel)
   const currentKey = getApiKeyForModel(settings, selectedModel)
@@ -203,6 +227,8 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
   async function handleModelChange(newModel: string) {
     setSelectedModel(newModel)
     await saveSettings({ ...settings, model: newModel })
+    setModelStatusMsg('✓ モデルを決定・保存しました')
+    setTimeout(() => setModelStatusMsg(''), 3000)
   }
 
   function handleKeyChange(val: string) {
@@ -347,6 +373,11 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
             </select>
             <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           </div>
+          {modelStatusMsg && (
+            <p className="text-[10px] text-green-600 font-medium mt-1 animate-fade-in">
+              {modelStatusMsg}
+            </p>
+          )}
         </div>
 
         <div>

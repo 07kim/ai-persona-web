@@ -16,6 +16,7 @@ import {
   generateDeliberationSummary,
   generateDesignSpec,
   parseUserFriendlyError,
+  formatGeminiModelLabel,
   type DesignSpec,
 } from '../lib/ai'
 import { generateId, now, sleep } from '../lib/utils'
@@ -944,6 +945,14 @@ export default function Deliberation() {
               </div>
             </div>
 
+            {/* 使用モデル情報 */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
+              <span className="text-gray-500">実行モデル</span>
+              <span className="font-semibold text-slate-800">
+                {formatGeminiModelLabel(settings.model || 'gemini-2.0-flash').split('（')[0]}
+              </span>
+            </div>
+
             {/* 開始ボタン */}
             <button
               onClick={handleStart}
@@ -1108,6 +1117,9 @@ export default function Deliberation() {
           <p className="text-xs text-gray-400 truncate">{participants.map(p => p.name).join(' · ')}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded-full px-2.5 py-0.5 font-medium">
+            {formatGeminiModelLabel(settings.model || 'gemini-2.0-flash').split('（')[0]}
+          </span>
           <span className="text-xs text-gray-500 border border-gray-200 rounded-full px-2.5 py-0.5">
             {currentTurn} / {maxTurns} 発言
           </span>

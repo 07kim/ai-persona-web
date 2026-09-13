@@ -215,9 +215,10 @@ export default function Settings() {
                   </optgroup>
                 ))}
               </select>
-              <p className="mt-1.5 text-xs text-gray-400">
-                選択中: {currentLabel}
-              </p>
+              <div className="mt-2 flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3 py-2 rounded-lg font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                <span>現在の動作モデル: {currentLabel}</span>
+              </div>
             </Section>
           )
         })()}
