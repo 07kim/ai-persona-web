@@ -133,7 +133,7 @@ export default function Discussion() {
           )
           success = true
         } catch (e) {
-          const friendly = parseUserFriendlyError(e)
+          const friendly = parseUserFriendlyError(e, settings.model || 'gemini-2.0-flash')
           if (attempt === 1) {
             // 2回失敗したらエラーバナーを出してこのペルソナをスキップ
             setSessionError(`${persona.name}の発言生成に失敗しました: ${friendly}`)
@@ -176,7 +176,7 @@ export default function Discussion() {
         chunk => { facText += chunk; setStreamingMsg(facText) },
       )
     } catch (e) {
-      const friendly = parseUserFriendlyError(e)
+      const friendly = parseUserFriendlyError(e, settings.model || 'gemini-2.0-flash')
       setSessionError(`ファシリテーターの要約生成に失敗しました: ${friendly}`)
     }
 

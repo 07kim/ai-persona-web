@@ -47,60 +47,63 @@ function isFreeTierDailyExhausted(err: unknown): boolean {
 }
 
 /** APIエラーをユーザー向けの日本語メッセージに変換する */
-export function parseUserFriendlyError(err: unknown): string {
+export function parseUserFriendlyError(err: unknown, targetModel?: string): string {
   const s = String(err)
+  const modelContext = targetModel ? `【対象モデル: ${targetModel}】` : ''
+  const rawMsg = s.replace(/\[GoogleGenerativeAI Error\]:\s*/gi, '').trim()
 
-  // ── APIキー関連 ──
+  // ── 401/403: APIキー・権限エラー ──
   if (
     s.includes('API_KEY_INVALID') ||
     s.includes('API key not valid') ||
-    s.includes('INVALID_ARGUMENT') && s.includes('key') ||
+    (s.includes('INVALID_ARGUMENT') && s.includes('key')) ||
     s.includes('401')
   ) {
-    return 'APIキーが正しくありません。設定画面でキーを確認・再入力してください。'
+    return `${modelContext}［エラー 401 認証失敗］APIキーが無効です。Google AI Studioで作成した正しいAPIキーを設定画面で再入力してください。（詳細: ${rawMsg.slice(0, 120)}）`
   }
   if (s.includes('403') || s.includes('PERMISSION_DENIED')) {
-    return 'このAPIキーには必要な権限がありません。Google AI Studioでキーの権限を確認してください。'
+    return `${modelContext}［エラー 403 権限不足］このAPIキーには必要な権限がないか、プロジェクトのAPIアクセスが拒否されました。（詳細: ${rawMsg.slice(0, 120)}）`
   }
 
-  // ── クォータ・レート制限 ──
+  // ── 404: モデル見つからない / 未対応エンドポイント ──
+  if (s.includes('NOT_FOUND') || s.includes('404') || s.includes('models/')) {
+    return `${modelContext}［エラー 404 モデル非対応/見つからない］選択中のモデルは現在のAPIキー/プロジェクトで利用できないか、チャットストリーミングに未対応です。設定画面で「Gemini 2.0 Flash」または別の実在モデルを選択してください。（API応答: ${rawMsg.slice(0, 150)}）`
+  }
+
+  // ── 429: クォータ・レート制限 ──
   if (isRateLimit(err) || isFreeTierDailyExhausted(err)) {
     const secs = parseRetrySeconds(s)
-    if (secs > 0) return `APIリクエスト制限に達しました（1分15回制限）。約${secs}秒後に自動で再試行します。`
-    return 'APIの利用制限（1分15回またはクォータ）に達しました。数秒待ってから「再開」を押してください。（※同一GCPプロジェクト内のAPIキーは上限が共有されます）'
+    const retryHint = secs > 0 ? `約${secs}秒後に再試行してください。` : '数秒待って「再開」を押してください。'
+    return `${modelContext}［エラー 429 レート制限/クォータ上限］利用上限（1分15回制限または1日上限）に達しました。${retryHint}（API応答: ${rawMsg.slice(0, 120)}）`
   }
 
-  // ── モデル・入力の問題 ──
-  if (s.includes('NOT_FOUND') || s.includes('404') || s.includes('models/')) {
-    return '選択されたモデルが見つかりません。設定画面で別のモデルを選んでください。'
-  }
+  // ── タイムアウト・コンテキスト長 ──
   if (s.includes('DEADLINE_EXCEEDED') || s.includes('timeout') || s.includes('timed out')) {
-    return 'AIの応答がタイムアウトしました。もう一度試してください。'
+    return `${modelContext}［タイムアウト］AIサーバーの応答が時間内に完了しませんでした。もう一度「再開」をお試しください。`
   }
   if (
     s.includes('context_length') || s.includes('TOO_LONG') ||
-    s.includes('token') && s.includes('exceed') || s.includes('maximum context')
+    (s.includes('token') && s.includes('exceed')) || s.includes('maximum context')
   ) {
-    return '入力が長すぎてAIが処理できませんでした。会話履歴や入力テキストを短くしてください。'
+    return `${modelContext}［トークン上限超過］入力テキストや過去の会話履歴が長すぎます。会話ログを短縮して再試行してください。`
   }
   if (s.includes('SAFETY') || s.includes('safety') || s.includes('blocked')) {
-    return 'AIの安全フィルターによりこの内容は生成できませんでした。テーマや言い回しを変えて試してください。'
+    return `${modelContext}［安全フィルター制限］AIの安全基準（Safety Filter）により回答がブロックされました。テーマや言い回しを変更してください。`
   }
 
-  // ── サーバー・ネットワーク ──
+  // ── 500/503: サーバー障害・ネットワーク ──
   if (s.includes('500') || s.includes('INTERNAL') || s.includes('Internal Server Error')) {
-    return 'AIサーバーで予期しないエラーが発生しました。しばらく待ってから再試行してください。'
+    return `${modelContext}［エラー 500 Google側内部障害］Google AIサーバーで一時的な内部エラーが発生しました。しばらく待ってから再開してください。（詳細: ${rawMsg.slice(0, 120)}）`
   }
   if (s.includes('503') || s.includes('UNAVAILABLE') || s.includes('Service Unavailable')) {
-    return 'AIサービスが一時的にダウンしています。数分後にもう一度お試しください。'
+    return `${modelContext}［エラー 503 サービス過負荷］AIサービスが一時的に高負荷またはメンテナンス中です。（詳細: ${rawMsg.slice(0, 120)}）`
   }
   if (s.includes('Failed to fetch') || s.includes('NetworkError') || s.includes('network') || s.includes('ERR_')) {
-    return 'ネットワークに接続できませんでした。インターネット接続を確認してください。'
+    return `${modelContext}［ネットワーク接続エラー］AIサーバーへの通信に失敗しました。インターネット接続環境をご確認ください。`
   }
 
-  // ── フォールバック（技術的な詳細を隠す） ──
-  const firstLine = s.split('\n')[0].replace(/\[GoogleGenerativeAI Error\]:\s*/i, '').slice(0, 100)
-  return `問題が発生しました。しばらく待ってから再試行してください。（${firstLine}）`
+  // ── その他すべての詳細エラー ──
+  return `${modelContext}［実行エラー］${rawMsg.slice(0, 180)}`
 }
 
 async function withRetry<T>(

@@ -269,11 +269,12 @@ export default function Deliberation() {
         setLoadingPhase('')
         return true
       } catch (e) {
-        const friendly = parseUserFriendlyError(e)
+        const friendly = parseUserFriendlyError(e, settings.model || 'gemini-2.0-flash')
         if (hasAddedMessage) {
           setMessages(prev => prev.filter(m => m.id !== msgId))
         }
         setSessionError(friendly)
+        console.error(`[Deliberation Error] Model: ${settings.model}:`, e)
         setCurrentSpeaker(null)
         setLoadingPhase('')
         const s = String(e)
@@ -336,8 +337,8 @@ export default function Deliberation() {
       }
       if (pausedByUserRef.current) endReason = 'paused'
     } catch (e) {
-      setSessionError(parseUserFriendlyError(e))
-      console.error('runLoop crashed:', e)
+      setSessionError(parseUserFriendlyError(e, settings.model || 'gemini-2.0-flash'))
+      console.error(`[Deliberation runLoop crashed] Model: ${settings.model}:`, e)
       endReason = 'error'
     } finally {
       isRunningRef.current = false

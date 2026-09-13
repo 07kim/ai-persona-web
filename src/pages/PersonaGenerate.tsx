@@ -99,7 +99,7 @@ export default function PersonaGenerate() {
       setGenerated(improvedPersonas)
       setStatus('done')
     } catch (e) {
-      setError(parseUserFriendlyError(e))
+      setError(parseUserFriendlyError(e, settings.model || 'gemini-2.0-flash'))
       setStatus('error')
     }
   }
