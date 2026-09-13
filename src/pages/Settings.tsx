@@ -154,6 +154,7 @@ export default function Settings() {
           placeholder="AIza..."
           testing={testing === 'gemini'}
           testResult={testResults.gemini}
+          availableModels={form.availableGeminiModels}
           onToggleShow={() => setShowKeys(s => ({ ...s, gemini: !s.gemini }))}
           onChange={v => handleChange('apiKey', v)}
           onTest={() => handleTest('gemini')}
@@ -311,11 +312,11 @@ export default function Settings() {
 }
 
 function ApiKeySection({
-  title, hint, keyValue, showKey, placeholder, testing, testResult,
+  title, hint, keyValue, showKey, placeholder, testing, testResult, availableModels,
   onToggleShow, onChange, onTest,
 }: {
   title: string; hint: string; keyValue: string; showKey: boolean; placeholder: string
-  testing: boolean; testResult: TestState
+  testing: boolean; testResult: TestState; availableModels?: string[]
   onToggleShow: () => void; onChange: (v: string) => void; onTest: () => void
 }) {
   return (
@@ -346,15 +347,32 @@ function ApiKeySection({
           動作確認する
         </button>
         {testResult && (
-          <span className={`flex items-center gap-1.5 text-sm ${testResult.ok ? 'text-green-600' : 'text-red-600'}`}>
+          <span className={`flex items-center gap-1.5 text-sm ${testResult.ok ? 'text-green-600 font-medium' : 'text-red-600'}`}>
             {testResult.ok ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
-            {testResult.ok ? '接続成功' : '接続失敗'}
+            {testResult.ok
+              ? `接続成功（${availableModels?.length ? `${availableModels.length}件のモデルを取得` : 'キー有効'}）`
+              : '接続失敗'}
           </span>
         )}
       </div>
       {testResult && !testResult.ok && testResult.error && (
         <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">
           {testResult.error}
+        </div>
+      )}
+      {availableModels && availableModels.length > 0 && (
+        <div className="mt-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p className="text-[11px] font-semibold text-gray-600 mb-1.5 flex items-center gap-1.5">
+            <CheckCircle size={12} className="text-emerald-500" />
+            このキーで実際に利用可能なモデル一覧（{availableModels.length}件）:
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {availableModels.map(m => (
+              <span key={m} className="text-[11px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded shadow-xs font-mono">
+                {m}
+              </span>
+            ))}
+          </div>
         </div>
       )}
     </Section>

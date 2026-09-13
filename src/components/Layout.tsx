@@ -5,11 +5,12 @@ import {
   CheckCircle, Users, Wand2, MessageSquare,
   ClipboardList, BarChart2, Home, MessagesSquare, Play,
   AlertCircle, Loader, Search, FileText, ChevronRight, MessageCircle,
+  RefreshCw,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import CommandPalette from './CommandPalette'
 import FeedbackModal from './FeedbackModal'
-import { validateApiKey, formatGeminiModelLabel } from '../lib/ai'
+import { validateApiKey, formatGeminiModelLabel, fetchAvailableGeminiModels } from '../lib/ai'
 import { getProvider, getApiKeyForModel, detectProviderFromKey, DEFAULT_MODEL_FOR_PROVIDER } from '../types'
 
 const FALLBACK_GEMINI_MODELS = [
@@ -240,11 +241,32 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
       : null)
   }
 
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  async function handleRefreshModels() {
+    if (!settings.apiKey) return
+    setIsRefreshing(true)
+    try {
+      const models = await fetchAvailableGeminiModels(settings.apiKey)
+      if (models.length > 0) {
+        await saveSettings({ ...settings, availableGeminiModels: models })
+        setModelStatusMsg(`✓ モデル一覧を更新（${models.length}件）`)
+      } else {
+        setModelStatusMsg('モデル一覧の取得に失敗しました')
+      }
+    } catch {
+      setModelStatusMsg('モデル一覧の取得に失敗しました')
+    } finally {
+      setIsRefreshing(false)
+      setTimeout(() => setModelStatusMsg(''), 4000)
+    }
+  }
+
   async function handleSaveKey() {
     const trimmed = keyInput.trim()
     if (trimmed === currentKey) return
     if (!trimmed) {
-      await saveSettings({ ...settings, [providerField]: '' })
+      await saveSettings({ ...settings, [providerField]: '', availableGeminiModels: [] })
       setKeyStatus('idle')
       setDetectedProvider(null)
       return
@@ -252,7 +274,7 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
     const detected = detectProviderFromKey(trimmed) ?? provider
     const detectedField = detected === 'openai' ? 'openaiApiKey' : detected === 'anthropic' ? 'anthropicApiKey' : 'apiKey'
     setKeyStatus('testing')
-    setKeyMessage('確認中...')
+    setKeyMessage('キーを検証中...')
     const result = await validateApiKey(trimmed, detected)
     if (result.ok) {
       let newModel = detected !== provider ? DEFAULT_MODEL_FOR_PROVIDER[detected] : selectedModel
@@ -271,9 +293,10 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
       if (newModel !== selectedModel) setSelectedModel(newModel)
       setKeyStatus('ok')
       const label = detected === 'openai' ? 'OpenAI' : detected === 'anthropic' ? 'Anthropic' : 'Gemini'
-      setKeyMessage(detected !== provider ? `${label}キーを検出・自動切替` : '有効なキーです')
+      const countMsg = result.availableModels?.length ? `（${result.availableModels.length}件のモデルを取得）` : ''
+      setKeyMessage(detected !== provider ? `${label}キー認識完了 ${countMsg}` : `キー認識完了 ${countMsg}`)
       setDetectedProvider(null)
-      setTimeout(() => setKeyStatus('idle'), 4000)
+      setTimeout(() => setKeyStatus('idle'), 5000)
     } else {
       setKeyStatus('error')
       setKeyMessage(result.message)
@@ -351,14 +374,28 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
       {/* モデル & APIキー */}
       <div className="border-t border-gray-200 p-3 space-y-3 shrink-0">
         <div>
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">使用モデル</p>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">使用モデル</p>
+            {hasKey && provider === 'gemini' && (
+              <button
+                type="button"
+                onClick={handleRefreshModels}
+                disabled={isRefreshing}
+                title="APIキーから最新のモデル一覧を再取得"
+                className="text-[10px] text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 disabled:opacity-40"
+              >
+                <RefreshCw size={10} className={isRefreshing ? 'animate-spin' : ''} />
+                <span>更新</span>
+              </button>
+            )}
+          </div>
           <div className="relative">
             <select
               value={selectedModel}
               onChange={e => handleModelChange(e.target.value)}
               className="w-full text-xs border border-gray-200 rounded-lg pl-2.5 pr-6 py-1.5 bg-gray-50 focus:outline-none focus:ring-1 focus:ring-indigo-300 appearance-none cursor-pointer"
             >
-              <optgroup label="Google Gemini">
+              <optgroup label={settings.availableGeminiModels?.length ? `Google Gemini（キーから取得: ${geminiModels.length}件）` : 'Google Gemini'}>
                 {geminiModels.map(m => (
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
@@ -420,9 +457,14 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
           {keyStatus === 'idle' && !hasKey && !detectedProvider && (
             <p className="text-[10px] text-amber-500 mt-1 leading-tight">APIキーを入力してEnterで保存</p>
           )}
+          {keyStatus === 'idle' && hasKey && !detectedProvider && (
+            <p className="text-[10px] text-green-600 mt-1 leading-tight">
+              ✓ キー認識済（{settings.availableGeminiModels?.length ? `${settings.availableGeminiModels.length}件のモデル利用可能` : '有効'}）
+            </p>
+          )}
           {keyStatus !== 'idle' && keyMessage && (
             <p className={`text-[10px] mt-1 leading-tight ${
-              keyStatus === 'ok' ? 'text-green-600' :
+              keyStatus === 'ok' ? 'text-green-600 font-medium' :
               keyStatus === 'error' ? 'text-red-500' : 'text-gray-400'
             }`}>{keyMessage}</p>
           )}
