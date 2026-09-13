@@ -909,6 +909,49 @@ export function determineNextSpeakerLocally(
   return scored[0].participant
 }
 
+/** ペルソナ専用の対話プロンプト（職業人としてではなく、趣味・生活感・個人の価値観を軸に発言） */
+export function buildPersonaDeliberationSystemPrompt(persona: Persona): string {
+  const genderMap: Record<string, string> = { male: '男性', female: '女性', other: 'その他' }
+  const genderLabel = genderMap[persona.gender ?? ''] ?? '不明'
+
+  const details: string[] = []
+  if (persona.family) details.push(`- 家族構成: ${persona.family}`)
+  if (persona.hobbies?.length) details.push(`- 趣味・休日の日課: ${persona.hobbies.join('、')}`)
+  if (persona.favorite_content?.length) details.push(`- 好きなコンテンツ: ${persona.favorite_content.join('、')}`)
+  if (persona.apps_used?.length) details.push(`- よく使うアプリ: ${persona.apps_used.join('、')}`)
+  if (persona.screen_time) details.push(`- スマホ利用習慣: ${persona.screen_time}`)
+  if (persona.daily_routine) details.push(`- 典型的な1日: ${persona.daily_routine}`)
+  if (persona.personal_episode) details.push(`- 記憶に残るエピソード: ${persona.personal_episode}`)
+  if (persona.content_influence) details.push(`- 影響を受けた価値観: ${persona.content_influence}`)
+
+  return `あなたは「${persona.name}」本人としてこの議論に参加しています。
+
+## あなたのプロフィール
+- 名前: ${persona.name}
+- 年齢: ${persona.age}歳 (${genderLabel})
+- 職業: ${persona.occupation}（※職業は単なる背景情報です）
+${persona.city ? `- 居住地: ${persona.city}` : ''}
+${details.join('\n')}
+
+# あなたの価値観
+${persona.values.map(v => `- ${v}`).join('\n')}
+
+# 日常で感じている課題・本音
+${persona.pain_points.map(p => `- ${p}`).join('\n')}
+
+━━━━━━━━━━━━━━━━━━━━━
+## 【最重要】発言のスタンス
+1. **職業人・専門家としての講釈は絶対禁止**:
+   - あなたは専門家として議論に参加しているのではありません。専門的な話が出ても、職業人として話すのではなく、**「あなた個人の趣味・休日の過ごし方・家族・普段の生活実感・1人の一般生活者としての本音」** を軸に発言してください。
+2. **生活者としての素直なリアクション**:
+   - 難しい専門用語や机上の空論が出たら「正直、普段の生活でそんなの使わない」「趣味でやってる立場から言うと〜」「家族がいる身としては〜」と、生活感のある視点で切り込んでください。`
+}
+
+/** 発言テキストから「(120文字)」等の不要な文字数注記を除去する */
+export function cleanDeliberationText(text: string): string {
+  return text.replace(/[（(]\s*\d+\s*(?:文字|字)?\s*[）)]\s*$/g, '').trim()
+}
+
 // 参加者の発言生成（ストリーミング・短文テンポ重視・ハイブリッド文脈）
 export async function generateDeliberationReply(
   _participant: DeliberationParticipant,
@@ -927,7 +970,8 @@ export async function generateDeliberationReply(
 1. 自分の立場・専門性・性格（ペルソナ）を絶対に崩さず、その人らしい口調と視点で発言してください。
 2. 挨拶や長々しい前置きは一切不要。要点・反論・共感・疑問からスパッと言い始めてください。
 3. 長文の講釈は禁止。リアルな会議のように「1〜3文（80〜150文字程度）」でテンポよく端的に述べてください。
-4. 直前の発言に対して、【賛同】【懸念・反論】【独自の視点・問いかけ】のいずれかのスタンスを明確にしてください。`
+4. 直前の発言に対して、【賛同】【懸念・反論】【独自の視点・問いかけ】のいずれかのスタンスを明確にしてください。
+5. 【重要】文字数カウントや注記（例: （120文字）など）は絶対に出力しないでください。発言本文のみを出力してください。`
 
   // ハイブリッド文脈：直近5件のやり取りを抽出
   const recentHistory = history.slice(-5)
@@ -963,7 +1007,7 @@ export async function generateFacilitatorDeliberationReply(
     ? `\n## 直近の発言\n${recentHistory.map(m => `${m.name}: ${m.content}`).join('\n\n')}\n`
     : ''
 
-  const userMessage = `テーマ「${topic}」について議論しています。${historyText}\nファシリテーターとして、これまでの流れを1〜2文で軽く整理し、まだ発言の少ない参加者や異なる視点を持つ参加者を「〇〇さん、〜についてはどうでしょうか？」のように名指しで促してください（120文字以内）。`
+  const userMessage = `テーマ「${topic}」について議論しています。${historyText}\nファシリテーターとして、これまでの流れを1〜2文で軽く整理し、まだ発言の少ない参加者や異なる視点を持つ参加者を「〇〇さん、〜についてはどうでしょうか？」のように名指しで促してください（120文字以内）。※文字数注記は出力しないでください。`
 
   return generateTextStream([{ role: 'user', content: userMessage }], systemPrompt, settings, onChunk, onWait)
 }

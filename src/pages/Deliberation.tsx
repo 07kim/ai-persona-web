@@ -10,6 +10,8 @@ import {
   generateDeliberationReply,
   generateFacilitatorDeliberationReply,
   determineNextSpeakerLocally,
+  buildPersonaDeliberationSystemPrompt,
+  cleanDeliberationText,
   updateDeliberationArtifact,
   generateDeliberationSummary,
   generateDesignSpec,
@@ -229,12 +231,22 @@ export default function Deliberation() {
             accumulated += chunk; updateStreamingMessage(msgId, accumulated)
           }, onRateWait)
         } else {
-          const systemPrompt = buildParticipantSystemPrompt(participant.name, participant.role)
+          // 一般ペルソナ（自作・登録ペルソナ）の場合は趣味・生活感・個人の価値観を軸にしたプロンプトを使用
+          let systemPrompt: string
+          const targetPersona = participant.personaId ? personas.find(p => p.id === participant.personaId) : null
+          if (targetPersona) {
+            systemPrompt = buildPersonaDeliberationSystemPrompt(targetPersona)
+          } else {
+            systemPrompt = buildParticipantSystemPrompt(participant.name, participant.role)
+          }
+
           await generateDeliberationReply(participant, systemPrompt, topic, history, settings, chunk => {
             accumulated += chunk; updateStreamingMessage(msgId, accumulated)
           }, onRateWait, materials)
         }
-        updateStreamingMessage(msgId, accumulated, true)
+        // 末尾の不要な文字数注記（例: （120文字））を自動消去して確定
+        const cleanedText = cleanDeliberationText(accumulated)
+        updateStreamingMessage(msgId, cleanedText, true)
         // 実際の発言数とターン数を厳密に同期
         const completedCount = messagesRef.current.filter(m => !m.isUser && !m.isStreaming).length
         turnRef.current = completedCount
