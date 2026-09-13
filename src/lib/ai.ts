@@ -124,14 +124,21 @@ async function withRetry<T>(
 
 function getModelName(settings: Settings): string {
   if (settings.model && settings.model !== 'default') return settings.model
-  return 'gemini-2.5-flash'
+  return 'gemini-2.0-flash'
 }
 
 type Message = { role: 'user' | 'assistant'; content: string }
 
 function isModelNotFoundError(err: unknown): boolean {
-  const s = String(err)
-  return s.includes('NOT_FOUND') || s.includes('404') || s.includes('models/')
+  const s = String(err).toLowerCase()
+  return (
+    s.includes('not_found') ||
+    s.includes('404') ||
+    s.includes('models/') ||
+    s.includes('is not found') ||
+    s.includes('not supported') ||
+    s.includes('unsupported')
+  )
 }
 
 /** 実行時にモデルが見つからなかった場合に利用可能な有効モデルを自動特定し、設定を自己修復する */
@@ -346,30 +353,30 @@ async function generateTextStream(
     ...images.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
   ]
 
-  const runGeminiStream = async (targetModel: string) => {
+  const executeGeminiStream = async (targetModel: string): Promise<string> => {
+    let textAcc = ''
     const genModel = client.getGenerativeModel({ model: targetModel, systemInstruction: systemPrompt })
     const chat = genModel.startChat({ history })
-    return await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
+    const responseStream = await withRetry(() => chat.sendMessageStream(geminiParts), onWait)
+
+    for await (const chunk of responseStream.stream) {
+      const t = chunk.text()
+      textAcc += t
+      if (t) onChunk(t)
+    }
+    return textAcc
   }
 
-  let result
   try {
-    result = await runGeminiStream(activeModel)
+    return await executeGeminiStream(activeModel)
   } catch (err) {
     if (isModelNotFoundError(err)) {
+      console.warn(`[Gemini] Model ${activeModel} not found or unsupported. Auto-healing...`)
       activeModel = await autoHealGeminiModel(apiKey, activeModel)
-      result = await runGeminiStream(activeModel)
-    } else {
-      throw err
+      return await executeGeminiStream(activeModel)
     }
+    throw err
   }
-
-  for await (const chunk of result.stream) {
-    const t = chunk.text()
-    full += t
-    if (t) onChunk(t)
-  }
-  return full
 }
 
 /** Geminiで利用可能なモデルIDの一覧を取得する */
@@ -413,21 +420,30 @@ export function selectBestGeminiModel(models: string[]): string | undefined {
     return match ? parseFloat(match[1]) : 0
   }
 
-  // スコアリング（Flash系 > Flash Lite系 > Pro系 > その他、かつバージョン降順）
+  // スコアリング（2.0 Flash / 1.5 Flash（大容量枠・1,500回/日）最優先 > その他Flash > Flash Lite > Pro）
   function getScore(name: string): number {
     const lower = name.toLowerCase()
     const ver = parseVersion(lower)
-    let base = 100
 
-    if (lower.includes('flash') && !lower.includes('lite') && !lower.includes('8b')) {
-      base = 1000 // 標準Flash（最優先・高速・高品質）
+    // 大容量1500回/日の2.0/1.5 Flashを最優先
+    if (lower === 'gemini-2.0-flash' || lower === 'gemini-2.0-flash-exp') return 2000
+    if (lower === 'gemini-1.5-flash') return 1800
+    if (lower === 'gemini-1.5-pro') return 1700
+    if (lower === 'gemini-2.0-flash-lite') return 1600
+
+    let base = 100
+    // 3.x系や実験プレビューは20回/日制限のため低め
+    if (lower.includes('3.') || lower.includes('3-flash')) {
+      base = 300
+    } else if (lower.includes('flash') && !lower.includes('lite') && !lower.includes('8b')) {
+      base = 1000
     } else if (lower.includes('flash') && (lower.includes('lite') || lower.includes('8b'))) {
-      base = 800  // Flash Lite
+      base = 800
     } else if (lower.includes('pro')) {
-      base = 600  // Pro系
+      base = 600
     }
 
-    return base + ver * 100
+    return base + ver * 10
   }
 
   const sorted = [...textModels].sort((a, b) => getScore(b) - getScore(a))
@@ -436,16 +452,14 @@ export function selectBestGeminiModel(models: string[]): string | undefined {
 
 /** 優先度順のGemini推奨モデル候補（フォールバック用） */
 const GEMINI_PREFERRED_ORDER = [
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
-  'gemini-3-flash',
-  'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-1.5-flash',
-  'gemini-3.1-pro',
-  'gemini-2.5-pro',
-  'gemini-2.0-flash-lite',
   'gemini-1.5-pro',
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-3.7-flash',
+  'gemini-3.5-flash',
 ]
 
 /** モデルIDを分かりやすい日本語ラベルに変換する */

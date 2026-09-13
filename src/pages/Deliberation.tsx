@@ -217,10 +217,17 @@ export default function Deliberation() {
       setCurrentSpeaker(participant.name)
       setLoadingPhase(`${participant.name}が発言中...`)
       const msgId = generateId()
-      addMessage({
-        id: msgId, participantId: participant.id, participantName: participant.name,
-        role: participant.role, content: '', timestamp: now(), isStreaming: true,
-      })
+      let hasAddedMessage = false
+
+      const ensureMessageAdded = (firstText: string) => {
+        if (!hasAddedMessage) {
+          hasAddedMessage = true
+          addMessage({
+            id: msgId, participantId: participant.id, participantName: participant.name,
+            role: participant.role, content: firstText, timestamp: now(), isStreaming: true,
+          })
+        }
+      }
 
       try {
         const history = messagesRef.current.filter(m => m.id !== msgId)
@@ -228,7 +235,9 @@ export default function Deliberation() {
         let accumulated = ''
         if (participant.isFacilitator) {
           await generateFacilitatorDeliberationReply(initialParticipants, topic, history, settings, chunk => {
-            accumulated += chunk; updateStreamingMessage(msgId, accumulated)
+            accumulated += chunk
+            ensureMessageAdded(accumulated)
+            updateStreamingMessage(msgId, accumulated)
           }, onRateWait)
         } else {
           // 一般ペルソナ（自作・登録ペルソナ）の場合は趣味・生活感・個人の価値観を軸にしたプロンプトを使用
@@ -241,11 +250,14 @@ export default function Deliberation() {
           }
 
           await generateDeliberationReply(participant, systemPrompt, topic, history, settings, chunk => {
-            accumulated += chunk; updateStreamingMessage(msgId, accumulated)
+            accumulated += chunk
+            ensureMessageAdded(accumulated)
+            updateStreamingMessage(msgId, accumulated)
           }, onRateWait, materials)
         }
         // 末尾の不要な文字数注記（例: （120文字））を自動消去して確定
         const cleanedText = cleanDeliberationText(accumulated)
+        if (!hasAddedMessage) ensureMessageAdded(cleanedText)
         updateStreamingMessage(msgId, cleanedText, true)
         // 実際の発言数とターン数を厳密に同期
         const completedCount = messagesRef.current.filter(m => !m.isUser && !m.isStreaming).length
@@ -257,7 +269,9 @@ export default function Deliberation() {
         return true
       } catch (e) {
         const friendly = parseUserFriendlyError(e)
-        setMessages(prev => prev.filter(m => m.id !== msgId))
+        if (hasAddedMessage) {
+          setMessages(prev => prev.filter(m => m.id !== msgId))
+        }
         setSessionError(friendly)
         setCurrentSpeaker(null)
         setLoadingPhase('')
@@ -1256,6 +1270,8 @@ export default function Deliberation() {
 
 // ── メッセージバブル ──
 function MessageBubble({ msg }: { msg: DeliberationMessage }) {
+  if (!msg.content && msg.isStreaming) return null
+
   if (msg.isUser) {
     return (
       <div className="flex justify-end">
