@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Trash2, Download, ChevronDown, ChevronUp, BarChart2, Loader, FileText, LayoutGrid, List, TrendingUp, MessagesSquare } from 'lucide-react'
+import { Trash2, Download, ChevronRight, BarChart2, Loader, FileText, LayoutGrid, List, TrendingUp, MessagesSquare } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { generateInsightReport } from '../lib/ai'
 import { downloadJson, downloadCsv, formatDate } from '../lib/utils'
@@ -119,16 +119,26 @@ export default function SurveyResults() {
             return (
               <div key={run.id} className="bg-white rounded-xl border border-gray-200">
                 <div className="px-5 py-4 flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-gray-900">{run.template_name}</h3>
-                      <StatusBadge status={run.status} />
-                      {run.materials && run.materials.length > 0 && (
-                        <span className="text-xs text-gray-400">資料{run.materials.length}件</span>
-                      )}
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : run.id)}
+                    className="flex-1 text-left flex items-start gap-2 group/title"
+                    aria-expanded={isExpanded}
+                  >
+                    <ChevronRight
+                      size={16}
+                      className={`shrink-0 mt-0.5 text-gray-400 group-hover/title:text-gray-600 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                    />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-semibold text-gray-900 group-hover/title:text-indigo-600 transition-colors">{run.template_name}</h3>
+                        <StatusBadge status={run.status} />
+                        {run.materials && run.materials.length > 0 && (
+                          <span className="text-xs text-gray-400">資料{run.materials.length}件</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">{run.results.length}人 · {formatDate(run.created_at)} · {isExpanded ? '閉じる' : 'クリックで展開'}</p>
                     </div>
-                    <p className="text-xs text-gray-400 mt-0.5">{run.results.length}人 · {formatDate(run.created_at)}</p>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-1">
                     {run.status === 'completed' && (
                       <button onClick={() => navigate('/deliberation', { state: { surveyRunId: run.id, surveyTopic: run.template_name } })}
@@ -140,9 +150,6 @@ export default function SurveyResults() {
                     <button onClick={() => handleDownloadCsv(run)} className="p-1.5 text-gray-400 hover:text-gray-700" title="CSV"><Download size={15} /></button>
                     <button onClick={() => downloadJson(run, `survey_${run.id}.json`)} className="p-1.5 text-gray-400 hover:text-gray-700" title="JSON"><FileText size={15} /></button>
                     <button onClick={() => { if (window.confirm('削除しますか？')) deleteSurveyRun(run.id) }} className="p-1.5 text-gray-400 hover:text-red-400"><Trash2 size={15} /></button>
-                    <button onClick={() => setExpandedId(isExpanded ? null : run.id)} className="p-1.5 text-gray-400 hover:text-gray-700">
-                      {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                    </button>
                   </div>
                 </div>
 

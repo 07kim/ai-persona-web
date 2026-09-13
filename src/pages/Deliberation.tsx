@@ -73,12 +73,12 @@ export default function Deliberation() {
   const [autoEnd, setAutoEnd] = useState(initConfig?.autoEnd ?? true)
   const [facilitatorEnabled, setFacilitatorEnabled] = useState(initConfig?.facilitatorEnabled ?? false)
   const [facilitatorName, setFacilitatorName] = useState(initConfig?.facilitatorName ?? 'ファシリテーター')
-  const [facilitatorInterval, setFacilitatorInterval] = useState(initConfig?.facilitatorInterval ?? 3)
+  const [facilitatorInterval, setFacilitatorInterval] = useState(initConfig?.facilitatorInterval ?? 4)
 
   // セッション状態
   const [messages, setMessages] = useState<DeliberationMessage[]>(resumeSession?.messages ?? [])
   const [artifact, setArtifact] = useState<ArtifactData | null>(resumeSession?.artifact ?? null)
-  const [designSpec, setDesignSpec] = useState<DesignSpec | null>(null)
+  const [designSpec, setDesignSpec] = useState<DesignSpec | null>(resumeSession?.designSpec ?? null)
   const [designGenerating, setDesignGenerating] = useState(false)
   const [artifactTab, setArtifactTab] = useState<ArtifactTab>('minutes')
   const [currentTurn, setCurrentTurn] = useState(resumeSession?.turn ?? 0)
@@ -92,7 +92,8 @@ export default function Deliberation() {
   const [summary, setSummary] = useState<DeliberationSummary | null>(resumeSession?.summary ?? null)
 
   const isRunningRef = useRef(false)
-  const turnRef = useRef(resumeSession?.turn ?? 0)
+  const turnRef = useRef(resumeSession?.turn ?? 0)   // 総発言数
+  const pausedByUserRef = useRef(false)              // ユーザーが「一時停止」したか
   const pendingUserMsg = useRef<string | null>(null)
   const messagesRef = useRef<DeliberationMessage[]>(resumeSession?.messages ?? [])
   const chatBottomRef = useRef<HTMLDivElement>(null)
@@ -173,141 +174,156 @@ export default function Deliberation() {
     }
   }
 
-  // ── メインループ ──
-  const runLoop = useCallback(async (initialParticipants: DeliberationParticipant[], facInterval = 3) => {
+  // ── メインループ（動的ルーター方式）──
+  // 発言者はLLMルーターが会話の流れを読んで選出。ファシリテーターは facInterval 発言ごとに
+  // 「ここまでのまとめ＋次の論点提示」を行う。結論が出る or 最大発言数到達で終了し、必ず結論を生成する
+  const runLoop = useCallback(async (
+    initialParticipants: DeliberationParticipant[],
+    facInterval = 4,
+  ): Promise<'concluded' | 'cap' | 'paused' | 'error'> => {
     isRunningRef.current = true
+    pausedByUserRef.current = false
     setIsRunning(true)
     setSessionError('')
     setError('')
 
-    try {
-      while (isRunningRef.current && turnRef.current < maxTurns) {
-        const pendingMsg = pendingUserMsg.current
-        if (pendingMsg) {
-          pendingUserMsg.current = null
-          addMessage({
-            id: generateId(),
-            participantId: 'user',
-            participantName: 'あなた',
-            role: 'オブザーバー',
-            content: pendingMsg,
-            timestamp: now(),
-            isUser: true,
-          })
-        }
+    const onRateWait = (secs: number) => {
+      setLoadingPhase(`リクエスト制限中 — ${secs}秒後に再試行します...`)
+    }
 
-        // ルーター: 次の発言者を選択
-        const onRateWait = (secs: number) => {
-          setLoadingPhase(`リクエスト制限中 — ${secs}秒後に再試行します...`)
-        }
+    const facilitator = initialParticipants.find(p => p.isFacilitator) ?? null
+    const speakers = initialParticipants.filter(p => !p.isFacilitator)
 
-        // ファシリテーターがいる場合、N ターンごとに強制挿入
-        const facilitator = initialParticipants.find(p => p.isFacilitator) ?? null
-        const nonFacilitators = initialParticipants.filter(p => !p.isFacilitator)
-        const regularTurnCount = turnRef.current  // ファシリテーターターンも込みのカウント
-        const isFacilitatorTurn = facilitator !== null
-          && regularTurnCount > 0
-          && regularTurnCount % facInterval === 0
-
-        let nextId: string
-        let concluded = false
-
-        if (isFacilitatorTurn) {
-          nextId = facilitator!.id
-        } else {
-          try {
-            setLoadingPhase('次の発言者を選択中...')
-            // ルーターにはファシリテーター以外の参加者だけ渡す
-            const routerParticipants = nonFacilitators.length > 0 ? nonFacilitators : initialParticipants
-            const history = messagesRef.current.slice(-12).map(m => ({ name: m.participantName, content: m.content }))
-            const res = await selectNextSpeaker(routerParticipants, topic, history, settings, onRateWait)
-            nextId = res.nextParticipantId
-            concluded = autoEnd && res.concluded
-          } catch (e) {
-            const friendly = parseUserFriendlyError(e)
-            if (String(e).includes('free_tier') || String(e).includes('FreeTier') || String(e).includes('limit: 0') ||
-                String(e).includes('API_KEY') || String(e).includes('401') || String(e).includes('403')) {
-              setSessionError(friendly)
-              break
-            }
-            nextId = nonFacilitators[turnRef.current % Math.max(nonFacilitators.length, 1)].id
-            console.warn('router fallback:', e)
-          }
-        }
-
-        if (concluded) break
-
-        const participant = initialParticipants.find(p => p.id === nextId) ?? initialParticipants[0]
-        setCurrentSpeaker(participant.name)
-        setLoadingPhase(`${participant.name}が発言を考えています...`)
-
-        const msgId = generateId()
+    // 1人に発言させる内部関数。成功でtrue、致命的エラーでfalse
+    const speak = async (participant: DeliberationParticipant): Promise<boolean> => {
+      // 保留中のユーザー発言を先に差し込む
+      const pendingMsg = pendingUserMsg.current
+      if (pendingMsg) {
+        pendingUserMsg.current = null
         addMessage({
-          id: msgId,
-          participantId: participant.id,
-          participantName: participant.name,
-          role: participant.role,
-          content: '',
-          timestamp: now(),
-          isStreaming: true,
+          id: generateId(), participantId: 'user', participantName: 'あなた',
+          role: 'オブザーバー', content: pendingMsg, timestamp: now(), isUser: true,
         })
+      }
 
-        try {
-          const history = messagesRef.current.filter(m => m.id !== msgId).slice(-10)
-            .map(m => ({ name: m.participantName, content: m.content, isUser: m.isUser }))
+      setCurrentSpeaker(participant.name)
+      setLoadingPhase(`${participant.name}が発言を考えています...`)
+      const msgId = generateId()
+      addMessage({
+        id: msgId, participantId: participant.id, participantName: participant.name,
+        role: participant.role, content: '', timestamp: now(), isStreaming: true,
+      })
 
-          let accumulated = ''
-          if (participant.isFacilitator) {
-            await generateFacilitatorDeliberationReply(initialParticipants, topic, history, settings, chunk => {
-              accumulated += chunk
-              updateStreamingMessage(msgId, accumulated)
-            }, onRateWait)
-          } else {
-            const systemPrompt = buildParticipantSystemPrompt(participant.name, participant.role)
-            await generateDeliberationReply(participant, systemPrompt, topic, history, settings, chunk => {
-              accumulated += chunk
-              updateStreamingMessage(msgId, accumulated)
-            }, onRateWait, materials)
-          }
-          updateStreamingMessage(msgId, accumulated, true)
-        } catch (e) {
-          const friendly = parseUserFriendlyError(e)
-          // エラーは空メッセージを削除してバナーで表示（チャットバブルには入れない）
-          setMessages(prev => prev.filter(m => m.id !== msgId))
-          setSessionError(friendly)
-          const s = String(e)
-          if (s.includes('free_tier') || s.includes('FreeTier') || s.includes('limit: 0') ||
-              s.includes('API_KEY') || s.includes('401') || s.includes('403') ||
-              s.includes('NOT_FOUND') || s.includes('404')) {
-            break
-          }
-          // 非致命的エラーはターンをスキップして継続
+      try {
+        const history = messagesRef.current.filter(m => m.id !== msgId).slice(-10)
+          .map(m => ({ name: m.participantName, content: m.content, isUser: m.isUser }))
+        let accumulated = ''
+        if (participant.isFacilitator) {
+          await generateFacilitatorDeliberationReply(initialParticipants, topic, history, settings, chunk => {
+            accumulated += chunk; updateStreamingMessage(msgId, accumulated)
+          }, onRateWait)
+        } else {
+          const systemPrompt = buildParticipantSystemPrompt(participant.name, participant.role)
+          await generateDeliberationReply(participant, systemPrompt, topic, history, settings, chunk => {
+            accumulated += chunk; updateStreamingMessage(msgId, accumulated)
+          }, onRateWait, materials)
         }
-
+        updateStreamingMessage(msgId, accumulated, true)
         turnRef.current += 1
         setCurrentTurn(turnRef.current)
         setCurrentSpeaker(null)
         setLoadingPhase('')
+        return true
+      } catch (e) {
+        const friendly = parseUserFriendlyError(e)
+        setMessages(prev => prev.filter(m => m.id !== msgId))
+        setSessionError(friendly)
+        setCurrentSpeaker(null)
+        setLoadingPhase('')
+        const s = String(e)
+        // 致命的エラーは中断
+        if (s.includes('free_tier') || s.includes('FreeTier') || s.includes('limit: 0') ||
+            s.includes('API_KEY') || s.includes('401') || s.includes('403') ||
+            s.includes('NOT_FOUND') || s.includes('404')) {
+          return false
+        }
+        // 非致命的エラーはこの発言をスキップして継続
+        return true
+      }
+    }
 
-        // 議事録は5ターンごと・かつターン後に3秒遅延してリクエストを分散
+    const routerPool = speakers.length > 0 ? speakers : initialParticipants
+    let endReason: 'concluded' | 'cap' | 'paused' | 'error' = 'paused'
+
+    try {
+      while (isRunningRef.current && turnRef.current < maxTurns) {
+        // === 次の発言者を決定 ===
+        let next: DeliberationParticipant
+
+        // ファシリテーターは facInterval 発言ごとに「まとめ＋論点提示」を挿入
+        const isFacilitatorTurn = facilitator !== null
+          && turnRef.current > 0
+          && turnRef.current % facInterval === 0
+
+        if (isFacilitatorTurn) {
+          next = facilitator!
+        } else {
+          try {
+            setLoadingPhase('次の発言者を選んでいます...')
+            const history = messagesRef.current.slice(-12).map(m => ({ name: m.participantName, content: m.content }))
+            const res = await selectNextSpeaker(routerPool, topic, history, settings, onRateWait)
+            // 十分に議論が深まり結論が出たら終了
+            if (autoEnd && res.concluded && turnRef.current >= routerPool.length) {
+              endReason = 'concluded'
+              break
+            }
+            next = routerPool.find(p => p.id === res.nextParticipantId)
+              ?? routerPool[turnRef.current % routerPool.length]
+          } catch (e) {
+            const s = String(e)
+            if (s.includes('free_tier') || s.includes('FreeTier') || s.includes('limit: 0') ||
+                s.includes('API_KEY') || s.includes('401') || s.includes('403')) {
+              setSessionError(parseUserFriendlyError(e))
+              endReason = 'error'
+              break
+            }
+            // ルーター失敗時は順番でフォールバック
+            next = routerPool[turnRef.current % routerPool.length]
+            console.warn('router fallback:', e)
+          }
+        }
+
+        if (!isRunningRef.current) break
+
+        const ok = await speak(next)
+        if (!ok) { endReason = 'error'; break }
+
+        // 議事録は5発言ごとに更新（リクエスト分散のため遅延）
         if (turnRef.current % 5 === 0) {
           await sleep(3000)
           if (isRunningRef.current) triggerArtifactUpdate(messagesRef.current)
         } else {
-          // ターン間に2秒の間隔を空けてRPM制限を緩和
           await sleep(2000)
         }
       }
+
+      // 終了理由の確定
+      if (endReason !== 'concluded' && endReason !== 'error') {
+        endReason = turnRef.current >= maxTurns ? 'cap' : 'paused'
+      }
+      if (pausedByUserRef.current) endReason = 'paused'
     } catch (e) {
       setSessionError(parseUserFriendlyError(e))
       console.error('runLoop crashed:', e)
+      endReason = 'error'
     } finally {
       isRunningRef.current = false
       setIsRunning(false)
       setCurrentSpeaker(null)
       setLoadingPhase('')
     }
-  }, [topic, maxTurns, autoEnd, settings, triggerArtifactUpdate])
+    return endReason
+  }, [topic, maxTurns, autoEnd, settings, materials, triggerArtifactUpdate])
 
   async function handleStart() {
     if (!canStart || !settings.apiKey) { if (!settings.apiKey) setError('APIキーが設定されていません'); return }
@@ -339,13 +355,18 @@ export default function Deliberation() {
       turn: 0,
       participantConfig: buildParticipantConfig(),
       materials: materials.length > 0 ? materials : undefined,
+      designSpec: null,
     }
     await saveDeliberationSession(initialRecord)
 
     setScreen('session')
-    await runLoop(participants, facilitatorInterval)
-    // ループが自然終了（上限到達・autoEnd）したら active で保存
-    await saveCurrentSession('active')
+    const reason = await runLoop(participants, facilitatorInterval)
+    // 結論到達・上限到達で自然終了 → 必ず結論を生成して完了。中断/エラーは途中保存
+    if (reason === 'concluded' || reason === 'cap') {
+      await finalizeSession()
+    } else {
+      await saveCurrentSession('active')
+    }
   }
 
   function buildParticipantConfig(): DeliberationParticipantConfig {
@@ -376,6 +397,7 @@ export default function Deliberation() {
       turn: turnRef.current,
       participantConfig: buildParticipantConfig(),
       materials: materials.length > 0 ? materials : undefined,
+      designSpec,
     }
     await saveDeliberationSession(record)
   }
@@ -396,18 +418,47 @@ export default function Deliberation() {
       }
       pendingUserMsg.current = null
       addMessage(msg)
-      await runLoop(participants, facilitatorInterval)
-      await saveCurrentSession('active')
+      const reason = await runLoop(participants, facilitatorInterval)
+      if (reason === 'concluded' || reason === 'cap') {
+        await finalizeSession()
+      } else {
+        await saveCurrentSession('active')
+      }
     }
   }
 
-  async function handleEnd() {
+  // 議論を締めて結論を生成・保存し、まとめ画面へ遷移する
+  async function finalizeSession() {
     isRunningRef.current = false
     setIsRunning(false)
     setCurrentSpeaker(null)
+
+    const facilitator = participants.find(p => p.isFacilitator) ?? null
     let sum: DeliberationSummary | null = null
-    if (settings.apiKey) {
+
+    if (settings.apiKey && messagesRef.current.filter(m => !m.isUser).length > 0) {
+      // ファシリテーターがいれば最後に締めの発言を追加
+      if (facilitator) {
+        try {
+          setLoadingPhase(`${facilitator.name}が議論を締めくくっています...`)
+          const history = messagesRef.current.filter(m => m.content).slice(-12)
+            .map(m => ({ name: m.participantName, content: m.content, isUser: m.isUser }))
+          const closingId = generateId()
+          addMessage({
+            id: closingId, participantId: facilitator.id, participantName: facilitator.name,
+            role: facilitator.role, content: '', timestamp: now(), isStreaming: true,
+          })
+          let acc = ''
+          await generateFacilitatorDeliberationReply(participants, `${topic}（議論の締めくくり。ここまでの結論を簡潔にまとめてください）`, history, settings, chunk => {
+            acc += chunk; updateStreamingMessage(closingId, acc)
+          })
+          updateStreamingMessage(closingId, acc, true)
+        } catch (e) {
+          console.error('closing failed', e)
+        }
+      }
       try {
+        setLoadingPhase('結論をまとめています...')
         const history = messagesRef.current.filter(m => !m.isUser).map(m => ({ name: m.participantName, content: m.content }))
         const [s] = await Promise.all([
           generateDeliberationSummary(topic, participants, history, settings),
@@ -419,7 +470,8 @@ export default function Deliberation() {
         console.error('summary failed', e)
       }
     }
-    // 完了として保存（summaryをstateより先に使う）
+    setLoadingPhase('')
+
     if (sessionIdRef.current) {
       const record: DeliberationSessionRecord = {
         id: sessionIdRef.current,
@@ -434,10 +486,16 @@ export default function Deliberation() {
         turn: turnRef.current,
         participantConfig: buildParticipantConfig(),
         materials: materials.length > 0 ? materials : undefined,
+        designSpec,
       }
       await saveDeliberationSession(record)
     }
     setScreen('summary')
+  }
+
+  // 手動終了ボタン
+  async function handleEnd() {
+    await finalizeSession()
   }
 
   async function handleReset() {
@@ -451,6 +509,7 @@ export default function Deliberation() {
     setSummary(null)
     setCurrentTurn(0)
     turnRef.current = 0
+    pausedByUserRef.current = false
     sessionIdRef.current = null
     setError('')
   }
@@ -782,7 +841,7 @@ export default function Deliberation() {
             {/* 設定（上に） */}
             <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-4">
               <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">最大ターン数</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">最大発言数</p>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setMaxTurns(t => Math.max(4, t - 2))}
@@ -794,6 +853,7 @@ export default function Deliberation() {
                     className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50 font-bold text-lg"
                   >+</button>
                 </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">この発言数を上限に議論。結論が出れば早めに終了します</p>
               </div>
               <div className="flex items-center justify-between">
                 <div>
@@ -1029,14 +1089,18 @@ export default function Deliberation() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-gray-500 border border-gray-200 rounded-full px-2.5 py-0.5">
-            {currentTurn} / {maxTurns} ターン
+            {currentTurn} / {maxTurns} 発言
           </span>
           {isRunning ? (
-            <button onClick={() => { isRunningRef.current = false }} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors">
+            <button onClick={() => { pausedByUserRef.current = true; isRunningRef.current = false }} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors">
               <Square size={11} /> 一時停止
             </button>
           ) : (
-            <button onClick={() => runLoop(participants, facilitatorInterval)} disabled={currentTurn >= maxTurns} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-40 transition-colors">
+            <button onClick={async () => {
+              const reason = await runLoop(participants, facilitatorInterval)
+              if (reason === 'concluded' || reason === 'cap') await finalizeSession()
+              else await saveCurrentSession('active')
+            }} disabled={currentTurn >= maxTurns} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-40 transition-colors">
               <Play size={11} /> 再開
             </button>
           )}
@@ -1171,7 +1235,7 @@ export default function Deliberation() {
             ) : !artifact ? (
               <div className="text-center text-gray-300 text-sm py-12">
                 <FileText size={28} className="mx-auto mb-2" />
-                <p>3ターン後に自動生成</p>
+                <p>数発言後に自動生成</p>
                 <p className="text-xs mt-1 text-gray-200">または右上の「更新」で手動生成</p>
               </div>
             ) : (
@@ -1592,7 +1656,7 @@ function ParticipantTemplatePanel({
                   customList: t.customList,
                   facilitatorEnabled: false,
                   facilitatorName: 'ファシリテーター',
-                  facilitatorInterval: 3,
+                  facilitatorInterval: 4,
                   maxTurns: 20,
                   autoEnd: true,
                 })}

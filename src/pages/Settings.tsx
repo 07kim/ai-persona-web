@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { validateApiKey } from '../lib/ai'
+import { getProvider } from '../types'
 import { Eye, EyeOff, CheckCircle, AlertCircle, Loader, Download, Upload, Database } from 'lucide-react'
 
 const MODEL_GROUPS = [
@@ -63,6 +64,12 @@ export default function Settings() {
     setTesting(provider)
     setTestResults(r => ({ ...r, [provider]: null }))
     const result = await validateApiKey(key, provider)
+    if (result.ok && result.detectedModel) {
+      const currentProvider = getProvider(form.model)
+      if (currentProvider === provider || !form.model) {
+        setForm(f => ({ ...f, model: result.detectedModel! }))
+      }
+    }
     setTestResults(r => ({ ...r, [provider]: { ok: result.ok, error: result.ok ? undefined : result.message } }))
     setTesting(null)
   }

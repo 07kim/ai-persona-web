@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   MessagesSquare, Trash2, ChevronRight, MessageSquare,
   CheckCircle2, Clock, AlertCircle, FileText, Play, Download, RotateCcw,
-  Search, X,
+  Search, X, Palette,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { PRESET_ROLES } from '../lib/presetRoles'
@@ -113,7 +113,7 @@ export default function DeliberationSessions() {
   const { deliberationSessions, personas, deleteDeliberationSession } = useAppStore()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'chat' | 'summary' | 'artifact'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'summary' | 'artifact' | 'design'>('chat')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'completed'>('all')
 
@@ -141,7 +141,7 @@ export default function DeliberationSessions() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-44px)] overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* 左ペイン: セッション一覧 */}
       <div className="w-72 shrink-0 border-r border-gray-200 bg-white flex flex-col">
         <div className="px-4 pt-4 pb-3 border-b border-gray-100 space-y-2.5">
@@ -267,7 +267,7 @@ export default function DeliberationSessions() {
                       </div>
                     )}
                     <p className="text-[10px] text-gray-400 mt-0.5">
-                      {s.messages.length}発言　{s.turn}ターン
+                      {s.messages.length}発言
                     </p>
                   </div>
                   <ChevronRight size={13} className={`shrink-0 mt-0.5 transition-colors ${
@@ -313,8 +313,8 @@ function SessionDetail({
   onContinue,
 }: {
   session: DeliberationSessionRecord
-  activeTab: 'chat' | 'summary' | 'artifact'
-  onTabChange: (t: 'chat' | 'summary' | 'artifact') => void
+  activeTab: 'chat' | 'summary' | 'artifact' | 'design'
+  onTabChange: (t: 'chat' | 'summary' | 'artifact' | 'design') => void
   confirmDeleteId: string | null
   onConfirmDelete: (id: string | null) => void
   onDelete: (id: string) => void
@@ -345,7 +345,7 @@ function SessionDetail({
                   {n}
                 </span>
               ))}
-              <span className="text-[11px] text-gray-400">{s.messages.length}発言　{s.turn}ターン</span>
+              <span className="text-[11px] text-gray-400">{s.messages.length}発言</span>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -397,6 +397,7 @@ function SessionDetail({
             { key: 'chat', label: '会話ログ', icon: MessageSquare },
             { key: 'summary', label: '結論・まとめ', icon: CheckCircle2 },
             { key: 'artifact', label: '議事録', icon: FileText },
+            { key: 'design', label: 'デザイン', icon: Palette },
           ] as const).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -419,6 +420,7 @@ function SessionDetail({
         {activeTab === 'chat' && <ChatTab messages={s.messages} />}
         {activeTab === 'summary' && <SummaryTab session={s} />}
         {activeTab === 'artifact' && <ArtifactTab session={s} />}
+        {activeTab === 'design' && <DesignTab session={s} />}
       </div>
     </>
   )
@@ -574,6 +576,91 @@ function ArtifactTab({ session: s }: { session: DeliberationSessionRecord }) {
                 </span>
                 {r.item}
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DesignTab({ session: s }: { session: DeliberationSessionRecord }) {
+  const spec = s.designSpec
+  if (!spec) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 text-gray-400">
+        <Palette size={24} className="text-gray-200" />
+        <p className="text-sm">デザイン仕様がありません</p>
+        <p className="text-xs">対話画面の「デザイン」タブで生成できます</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="px-6 py-5 space-y-5">
+      {/* 概要 */}
+      {spec.overview && (
+        <div className="bg-violet-50 border border-violet-100 rounded-xl p-4">
+          <p className="text-xs font-semibold text-violet-600 uppercase tracking-wide mb-1.5">プロダクト概要</p>
+          <p className="text-sm text-violet-900 leading-relaxed">{spec.overview}</p>
+        </div>
+      )}
+
+      {/* 画面設計 */}
+      {spec.screens.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">画面設計</p>
+          <div className="space-y-3">
+            {spec.screens.map((sc, i) => (
+              <div key={i} className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="bg-gray-800 px-3 py-1.5 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-red-400" />
+                  <span className="w-2 h-2 rounded-full bg-yellow-400" />
+                  <span className="w-2 h-2 rounded-full bg-green-400" />
+                  <span className="text-xs text-gray-400 ml-2 font-mono">{sc.name}</span>
+                </div>
+                <div className="p-3 bg-white">
+                  <p className="text-xs text-gray-600 mb-2 leading-relaxed">{sc.description}</p>
+                  {sc.components.length > 0 && (
+                    <div className="space-y-1">
+                      {sc.components.map((c, j) => (
+                        <div key={j} className="flex items-center gap-2 bg-gray-50 border border-dashed border-gray-200 rounded-lg px-2.5 py-1.5">
+                          <div className="w-1.5 h-1.5 rounded-sm bg-violet-400 shrink-0" />
+                          <span className="text-xs text-gray-600">{c}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 主要機能 */}
+      {spec.keyFeatures.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">主要機能</p>
+          <ul className="space-y-1.5">
+            {spec.keyFeatures.map((f, i) => (
+              <li key={i} className="flex gap-2 text-sm text-gray-700">
+                <span className="text-violet-400 shrink-0">◆</span>{f}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 技術スタック */}
+      {spec.techStack.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">推奨技術スタック</p>
+          <div className="flex flex-wrap gap-1.5">
+            {spec.techStack.map((t, i) => (
+              <span key={i} className="px-2.5 py-1 bg-gray-900 text-gray-200 rounded-lg text-xs font-mono">
+                {t}
+              </span>
             ))}
           </div>
         </div>

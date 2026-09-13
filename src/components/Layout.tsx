@@ -4,10 +4,11 @@ import {
   Cpu, ChevronDown, Eye, EyeOff,
   CheckCircle, Users, Wand2, MessageSquare,
   ClipboardList, BarChart2, Home, MessagesSquare, Play,
-  AlertCircle, Loader, Search, FileText, ChevronRight,
+  AlertCircle, Loader, Search, FileText, ChevronRight, MessageCircle,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import CommandPalette from './CommandPalette'
+import FeedbackModal from './FeedbackModal'
 import { validateApiKey } from '../lib/ai'
 import { getProvider, getApiKeyForModel, detectProviderFromKey, DEFAULT_MODEL_FOR_PROVIDER } from '../types'
 
@@ -112,7 +113,7 @@ export default function Layout() {
   }, [])
 
   return (
-    <div className="h-screen flex overflow-hidden bg-gray-50">
+    <div className="h-full flex overflow-hidden bg-gray-50">
       {sidebarOpen && <Sidebar onToggle={() => setSidebarOpen(false)} onOpenCmd={() => setCmdOpen(true)} />}
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -150,6 +151,8 @@ export default function Layout() {
   )
 }
 
+// FeedbackModal は Sidebar 内で使うのでエクスポート不要
+
 /* ── パンくず ── */
 function Breadcrumb() {
   const location = useLocation()
@@ -175,6 +178,7 @@ function Breadcrumb() {
 function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () => void }) {
   const { settings, saveSettings } = useAppStore()
   const [selectedModel, setSelectedModel] = useState(settings.model)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   const provider = getProvider(selectedModel)
   const currentKey = getApiKeyForModel(settings, selectedModel)
@@ -226,9 +230,14 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
     setKeyMessage('確認中...')
     const result = await validateApiKey(trimmed, detected)
     if (result.ok) {
-      const newModel = detected !== provider ? DEFAULT_MODEL_FOR_PROVIDER[detected] : selectedModel
+      let newModel = detected !== provider ? DEFAULT_MODEL_FOR_PROVIDER[detected] : selectedModel
+      if (result.detectedModel) {
+        if (detected !== provider || (detected === 'gemini' && result.detectedModel !== selectedModel)) {
+          newModel = result.detectedModel
+        }
+      }
       await saveSettings({ ...settings, [detectedField]: trimmed, model: newModel })
-      if (detected !== provider) setSelectedModel(newModel)
+      if (newModel !== selectedModel) setSelectedModel(newModel)
       setKeyStatus('ok')
       const label = detected === 'openai' ? 'OpenAI' : detected === 'anthropic' ? 'Anthropic' : 'Gemini'
       setKeyMessage(detected !== provider ? `${label}キーを検出・自動切替` : '有効なキーです')
@@ -375,6 +384,19 @@ function Sidebar({ onToggle, onOpenCmd }: { onToggle: () => void; onOpenCmd: () 
           )}
         </div>
       </div>
+
+      {/* フィードバックボタン */}
+      <div className="px-3 pb-3 shrink-0">
+        <button
+          onClick={() => setFeedbackOpen(true)}
+          className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-500 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 border border-gray-200 hover:border-indigo-200 rounded-lg py-2 transition-colors"
+        >
+          <MessageCircle size={13} />
+          ご意見・ご要望
+        </button>
+      </div>
+
+      {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
     </aside>
   )
 }

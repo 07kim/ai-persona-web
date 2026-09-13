@@ -5,7 +5,7 @@ import {
 } from '@google/generative-ai'
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
-import type { Persona, Question, SurveyAnswer, Settings, DeliberationParticipant, ArtifactData, DeliberationSummary, MaterialItem } from '../types'
+import type { Persona, Question, SurveyAnswer, Settings, DeliberationParticipant, ArtifactData, DeliberationSummary, MaterialItem, DesignSpec, DesignScreen } from '../types'
 import { getProvider, getApiKeyForModel } from '../types'
 import { sleep } from './utils'
 import { getPrompt } from './prompts'
@@ -296,11 +296,39 @@ async function generateTextStream(
   return full
 }
 
-/** APIキーが有効かどうかを最小リクエストで検証する */
+/** Geminiで利用可能なモデルIDの一覧を取得する */
+export async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`)
+    if (!res.ok) return []
+    const data = await res.json()
+    if (!data.models || !Array.isArray(data.models)) return []
+    return data.models
+      .filter((m: { supportedGenerationMethods?: string[] }) =>
+        Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent')
+      )
+      .map((m: { name?: string }) => (m.name || '').replace(/^models\//, ''))
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+/** 優先度順のGemini推奨モデル候補 */
+const GEMINI_PREFERRED_ORDER = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-pro',
+]
+
+/** APIキーが有効かどうかを最小リクエストで検証し、利用可能な最適モデルも特定する */
 export async function validateApiKey(
   apiKey: string,
   provider: 'gemini' | 'openai' | 'anthropic' = 'gemini',
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; detectedModel?: string }> {
   if (!apiKey.trim()) return { ok: false, message: 'APIキーを入力してください' }
   try {
     if (provider === 'openai') {
@@ -310,6 +338,7 @@ export async function validateApiKey(
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
       })
+      return { ok: true, message: '有効なAPIキーです', detectedModel: 'gpt-4o-mini' }
     } else if (provider === 'anthropic') {
       const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
       await client.messages.create({
@@ -317,12 +346,42 @@ export async function validateApiKey(
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
       })
+      return { ok: true, message: '有効なAPIキーです', detectedModel: 'claude-haiku-4-5-20251001' }
     } else {
-      const client = new GoogleGenerativeAI(apiKey)
-      const model = client.getGenerativeModel({ model: 'gemini-2.5-flash' })
-      await model.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+      // Geminiの場合: まず利用可能モデル一覧を取得
+      const availableModels = await fetchAvailableGeminiModels(apiKey)
+      let bestModel: string | undefined
+
+      if (availableModels.length > 0) {
+        // 優先度順に使えるモデルを探す
+        bestModel = GEMINI_PREFERRED_ORDER.find(m => availableModels.includes(m)) || availableModels[0]
+      } else {
+        // fetchが取得できなかった場合のフォールバック候補検証
+        const client = new GoogleGenerativeAI(apiKey)
+        for (const cand of GEMINI_PREFERRED_ORDER) {
+          try {
+            const m = client.getGenerativeModel({ model: cand })
+            await m.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+            bestModel = cand
+            break
+          } catch (e) {
+            const s = String(e)
+            if (s.includes('API_KEY_INVALID') || s.includes('401') || s.includes('403')) throw e
+            // 404の場合は次の候補を試す
+          }
+        }
+      }
+
+      if (!bestModel) {
+        // 最後のフォールバックテスト
+        const client = new GoogleGenerativeAI(apiKey)
+        const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' })
+        await model.generateContent({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
+        bestModel = 'gemini-1.5-flash'
+      }
+
+      return { ok: true, message: '有効なAPIキーです', detectedModel: bestModel }
     }
-    return { ok: true, message: '有効なAPIキーです' }
   } catch (err) {
     return { ok: false, message: parseUserFriendlyError(err) }
   }
@@ -856,19 +915,8 @@ JSON:
   }
 }
 
-// デザイン仕様生成（対話の成果物）
-export interface DesignScreen {
-  name: string
-  description: string
-  components: string[]
-}
-
-export interface DesignSpec {
-  overview: string
-  screens: DesignScreen[]
-  keyFeatures: string[]
-  techStack: string[]
-}
+// デザイン仕様生成（対話の成果物）— 型定義は types/index.ts に集約し、後方互換のため再エクスポート
+export type { DesignScreen, DesignSpec }
 
 export async function generateDesignSpec(
   topic: string,

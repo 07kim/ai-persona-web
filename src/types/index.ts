@@ -188,6 +188,20 @@ export interface DeliberationSummary {
   nextActions: string[]
 }
 
+// ── デザイン仕様（対話の成果物） ──
+export interface DesignScreen {
+  name: string
+  description: string
+  components: string[]
+}
+
+export interface DesignSpec {
+  overview: string
+  screens: DesignScreen[]
+  keyFeatures: string[]
+  techStack: string[]
+}
+
 export interface DeliberationParticipantConfig {
   presetIds: string[]
   personaIds: string[]
@@ -195,6 +209,7 @@ export interface DeliberationParticipantConfig {
   facilitatorEnabled: boolean
   facilitatorName: string
   facilitatorInterval: number
+  /** 最大発言数（この数に達すると議論を締めて結論を生成） */
   maxTurns: number
   autoEnd: boolean
 }
@@ -212,6 +227,7 @@ export interface DeliberationSessionRecord {
   turn: number
   participantConfig?: DeliberationParticipantConfig
   materials?: MaterialItem[]
+  designSpec?: DesignSpec | null
 }
 
 // ── 参加者テンプレート ──

@@ -51,7 +51,7 @@ export default function DiscussionHistory() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-44px)] overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* 左ペイン */}
       <div className="w-72 shrink-0 border-r border-gray-200 bg-white flex flex-col">
         <div className="px-4 py-4 border-b border-gray-100">

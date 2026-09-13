@@ -12,6 +12,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",
     "@google/generative-ai": "^0.24.1",
+    "@vercel/analytics": "^2.0.1",
     "idb": "^8.0.3",
     "lucide-react": "^1.22.0",
     "openai": "^6.45.0",

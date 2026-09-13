@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   Wand2, Users, MessageSquare, ClipboardList, BarChart2,
-  MessagesSquare, Play, FileText, ArrowUpRight,
+  MessagesSquare, Play, FileText, ArrowUpRight, Sparkles,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 
@@ -81,6 +81,23 @@ export default function Home() {
             ]}
           />
 
+        </div>
+
+        {/* デモモードのガイド */}
+        <div className="flex justify-center mt-8">
+          <div className="inline-flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-full px-4 py-2 select-none">
+            <Sparkles size={14} className="text-amber-500 shrink-0" />
+            <span className="text-xs text-amber-800">
+              サンプルデータで試すには、キーボードで
+              <kbd className="mx-1 px-1.5 py-0.5 rounded bg-white border border-amber-300 font-mono text-amber-700 text-[11px]">d</kbd>
+              <kbd className="mr-1 px-1.5 py-0.5 rounded bg-white border border-amber-300 font-mono text-amber-700 text-[11px]">e</kbd>
+              <kbd className="mr-1 px-1.5 py-0.5 rounded bg-white border border-amber-300 font-mono text-amber-700 text-[11px]">m</kbd>
+              <kbd className="mr-1.5 px-1.5 py-0.5 rounded bg-white border border-amber-300 font-mono text-amber-700 text-[11px]">o</kbd>
+              と入力（または
+              <kbd className="mx-1 px-1.5 py-0.5 rounded bg-white border border-amber-300 font-mono text-amber-700 text-[11px]">d</kbd>
+              を5回連打）
+            </span>
+          </div>
         </div>
       </div>
     </div>

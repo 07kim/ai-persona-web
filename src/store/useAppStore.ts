@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import type { Persona, SurveyTemplate, SurveyRun, DiscussionSession, Settings, DeliberationSessionRecord, ParticipantTemplate } from '../types'
 import * as db from '../lib/db'
+import {
+  MOCK_PERSONAS, MOCK_DISCUSSIONS, MOCK_DELIBERATION_SESSIONS,
+  MOCK_TEMPLATES, MOCK_SURVEY_RUNS,
+} from '../data/mockData'
 
 interface AppState {
   personas: Persona[]
@@ -11,8 +15,11 @@ interface AppState {
   participantTemplates: ParticipantTemplate[]
   settings: Settings
   initialized: boolean
+  demoMode: boolean
 
   init: () => Promise<void>
+  enableDemoMode: () => void
+  disableDemoMode: () => Promise<void>
 
   // Personas
   addPersonas: (personas: Persona[]) => Promise<void>
@@ -75,6 +82,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   participantTemplates: [],
   settings: DEFAULT_SETTINGS,
   initialized: false,
+  demoMode: false,
+
+  enableDemoMode: () => {
+    set({
+      demoMode: true,
+      personas: MOCK_PERSONAS,
+      discussions: MOCK_DISCUSSIONS,
+      deliberationSessions: MOCK_DELIBERATION_SESSIONS,
+      templates: MOCK_TEMPLATES,
+      surveyRuns: MOCK_SURVEY_RUNS,
+    })
+  },
+
+  disableDemoMode: async () => {
+    set({ demoMode: false, initialized: false })
+    await get().init()
+  },
 
   init: async () => {
     if (get().initialized) return
