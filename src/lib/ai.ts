@@ -223,11 +223,19 @@ async function generateText(
 
   // Gemini: 404発生時に動作するモデルへ即座に自動切り替えて実行完結
   const client = new GoogleGenerativeAI(apiKey)
+  const dynamicModels = (settings.availableGeminiModels || []).filter(m =>
+    !m.includes('customtools') && !m.includes('antigravity') && !m.includes('deep-research') && !m.includes('computer-use')
+  )
   const candidateModels = Array.from(new Set([
     model,
+    ...dynamicModels,
+    'gemini-1.5-flash-latest',
     'gemini-1.5-flash',
-    'gemini-2.0-flash',
+    'gemini-1.5-pro-latest',
     'gemini-1.5-pro',
+    'gemini-flash-latest',
+    'gemini-pro-latest',
+    'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
     ...GEMINI_PREFERRED_ORDER,
   ]))
@@ -361,11 +369,19 @@ async function generateTextStream(
     ...images.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
   ]
 
+  const dynamicModels = (settings.availableGeminiModels || []).filter(m =>
+    !m.includes('customtools') && !m.includes('antigravity') && !m.includes('deep-research') && !m.includes('computer-use')
+  )
   const candidateModels = Array.from(new Set([
     model,
+    ...dynamicModels,
+    'gemini-1.5-flash-latest',
     'gemini-1.5-flash',
-    'gemini-2.0-flash',
+    'gemini-1.5-pro-latest',
     'gemini-1.5-pro',
+    'gemini-flash-latest',
+    'gemini-pro-latest',
+    'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
     ...GEMINI_PREFERRED_ORDER,
   ]))
